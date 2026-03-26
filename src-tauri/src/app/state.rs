@@ -21,7 +21,7 @@ use crate::{
         service::{build_test_receipt, dispatch_print_job, dispatch_raw_job, PrintResult, PrintingOverview},
     },
     security::auth::{generate_pairing_code, AuthRecord, AuthState},
-    storage::repository::{PersistedState, StorageOverview, StorageRepository},
+    storage::repository::{PersistedBridgeState, PersistedState, StorageOverview, StorageRepository},
 };
 
 pub type SharedAppState = Arc<AppState>;
@@ -34,6 +34,7 @@ pub struct BootstrapPayload {
     pub config: AppConfig,
     pub api_server: ApiServerConfig,
     pub auth: AuthState,
+    pub bridge: BridgeSnapshot,
     pub pairing: PairingSnapshot,
     pub storage: StorageOverview,
     pub printing: PrintingOverview,
@@ -47,9 +48,26 @@ struct RuntimeState {
     printers: Vec<ResolvedPrinter>,
     printer_overrides: HashMap<String, PrinterOverride>,
     last_receipt: Option<ReceiptDocument>,
+    bridge: BridgeState,
     scanner_active: bool,
     last_refresh_error: Option<String>,
     pairing: PairingState,
+}
+
+#[derive(Clone, Default)]
+struct BridgeState {
+    paired_at_unix: Option<u64>,
+    last_seen_at_unix: Option<u64>,
+    last_origin: Option<String>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeSnapshot {
+    pub connected: bool,
+    pub paired_at: Option<String>,
+    pub last_seen_at: Option<String>,
+    pub last_origin: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -174,6 +192,7 @@ impl AppState {
             .save(&PersistedState {
                 config: config.clone(),
                 auth: persisted.auth.clone(),
+                bridge: persisted.bridge.clone(),
                 printer_overrides: persisted.printer_overrides.clone(),
             })
             .map_err(|error| format!("failed to persist initialized state: {error}"))?;
@@ -192,6 +211,7 @@ impl AppState {
                 printers,
                 printer_overrides: persisted.printer_overrides,
                 last_receipt: None,
+                bridge: BridgeState::from_record(&persisted.bridge),
                 scanner_active: false,
                 last_refresh_error: None,
                 pairing: PairingState::default(),
@@ -209,6 +229,7 @@ impl AppState {
             config: runtime.config.clone(),
             api_server: runtime.api_server.clone(),
             auth: AuthState::from_record(&runtime.auth),
+            bridge: bridge_snapshot(&runtime.bridge),
             pairing: pairing_snapshot(&runtime.pairing, runtime.config.allowed_origin.clone()),
             storage: self.storage_overview.clone(),
             printing: self.printing.clone(),
@@ -283,7 +304,12 @@ impl AppState {
         runtime.api_server.scanner_active = false;
         runtime.last_refresh_error = None;
 
-        self.persist_runtime(&runtime.config, &runtime.auth, &runtime.printer_overrides)?;
+        self.persist_runtime(
+            &runtime.config,
+            &runtime.auth,
+            &runtime.bridge,
+            &runtime.printer_overrides,
+        )?;
 
         Ok(BootstrapPayload {
             app_name: self.app_name.clone(),
@@ -291,6 +317,7 @@ impl AppState {
             config: runtime.config.clone(),
             api_server: runtime.api_server.clone(),
             auth: AuthState::from_record(&runtime.auth),
+            bridge: bridge_snapshot(&runtime.bridge),
             pairing: pairing_snapshot(&runtime.pairing, runtime.config.allowed_origin.clone()),
             storage: self.storage_overview.clone(),
             printing: self.printing.clone(),
@@ -327,7 +354,12 @@ impl AppState {
 
         runtime.config.default_printer_id = Some(printer_id.into());
         runtime.printers = apply_default_printer_flag(runtime.printers.clone(), Some(printer_id));
-        self.persist_runtime(&runtime.config, &runtime.auth, &runtime.printer_overrides)?;
+        self.persist_runtime(
+            &runtime.config,
+            &runtime.auth,
+            &runtime.bridge,
+            &runtime.printer_overrides,
+        )?;
 
         Ok(selected)
     }
@@ -382,7 +414,12 @@ impl AppState {
             runtime.config.default_printer_id.as_deref(),
         );
 
-        self.persist_runtime(&runtime.config, &runtime.auth, &runtime.printer_overrides)?;
+        self.persist_runtime(
+            &runtime.config,
+            &runtime.auth,
+            &runtime.bridge,
+            &runtime.printer_overrides,
+        )?;
 
         Ok(ConfigUpdateResult {
             config: runtime.config.clone(),
@@ -474,7 +511,12 @@ impl AppState {
             runtime.config.default_printer_id.as_deref(),
         );
 
-        self.persist_runtime(&runtime.config, &runtime.auth, &runtime.printer_overrides)?;
+        self.persist_runtime(
+            &runtime.config,
+            &runtime.auth,
+            &runtime.bridge,
+            &runtime.printer_overrides,
+        )?;
 
         runtime
             .printers
@@ -521,13 +563,36 @@ impl AppState {
         &self.app_version
     }
 
+    pub fn note_bridge_activity(&self, origin: Option<&str>) -> Result<(), String> {
+        let mut runtime = self.runtime.write().expect("runtime lock poisoned");
+        let now = unix_now();
+
+        runtime.bridge.paired_at_unix.get_or_insert(now);
+        runtime.bridge.last_seen_at_unix = Some(now);
+        if let Some(origin) = origin.filter(|value| !value.trim().is_empty()) {
+            runtime.bridge.last_origin = Some(origin.to_string());
+        }
+
+        self.persist_runtime(
+            &runtime.config,
+            &runtime.auth,
+            &runtime.bridge,
+            &runtime.printer_overrides,
+        )
+    }
+
     pub fn allow_origin(&self) -> Option<String> {
-        self.runtime
+        let configured_origin = self.runtime
             .read()
             .expect("runtime lock poisoned")
             .config
             .allowed_origin
-            .clone()
+            .clone();
+
+        match configured_origin {
+            Some(origin) => Some(resolve_effective_allowed_origin(Some(&origin))),
+            None => None,
+        }
     }
 
     pub fn consume_rate_limit(&self, bucket_key: &str) -> Result<(), String> {
@@ -596,13 +661,20 @@ impl AppState {
         let mut runtime = self.runtime.write().expect("runtime lock poisoned");
         runtime.auth.regenerate_token();
         runtime.pairing = PairingState::default();
-        self.persist_runtime(&runtime.config, &runtime.auth, &runtime.printer_overrides)?;
+        runtime.bridge = BridgeState::default();
+        self.persist_runtime(
+            &runtime.config,
+            &runtime.auth,
+            &runtime.bridge,
+            &runtime.printer_overrides,
+        )?;
         Ok(BootstrapPayload {
             app_name: self.app_name.clone(),
             app_version: self.app_version.clone(),
             config: runtime.config.clone(),
             api_server: runtime.api_server.clone(),
             auth: AuthState::from_record(&runtime.auth),
+            bridge: bridge_snapshot(&runtime.bridge),
             pairing: pairing_snapshot(&runtime.pairing, runtime.config.allowed_origin.clone()),
             storage: self.storage_overview.clone(),
             printing: self.printing.clone(),
@@ -638,8 +710,17 @@ impl AppState {
 
         let allowed_origin = runtime.config.allowed_origin.clone();
         let origin_allowed = is_origin_allowed(allowed_origin.as_deref(), origin);
+        runtime.bridge.paired_at_unix = Some(now);
+        runtime.bridge.last_seen_at_unix = Some(now);
+        runtime.bridge.last_origin = origin.map(ToString::to_string);
 
         runtime.pairing = PairingState::default();
+        self.persist_runtime(
+            &runtime.config,
+            &runtime.auth,
+            &runtime.bridge,
+            &runtime.printer_overrides,
+        )?;
 
         Ok(PairingExchangeResult {
             token: runtime.auth.token.clone(),
@@ -671,12 +752,14 @@ impl AppState {
         &self,
         config: &AppConfig,
         auth: &AuthRecord,
+        bridge: &BridgeState,
         printer_overrides: &HashMap<String, PrinterOverride>,
     ) -> Result<(), String> {
         self.storage_repository
             .save(&PersistedState {
                 config: config.clone(),
                 auth: auth.clone(),
+                bridge: bridge.to_record(),
                 printer_overrides: printer_overrides.clone(),
             })
             .map_err(|error| {
@@ -718,6 +801,24 @@ impl AppState {
         };
 
         let _ = append_print_log(&logs_directory, &entry);
+    }
+}
+
+impl BridgeState {
+    fn from_record(record: &PersistedBridgeState) -> Self {
+        Self {
+            paired_at_unix: record.paired_at_unix,
+            last_seen_at_unix: record.last_seen_at_unix,
+            last_origin: record.last_origin.clone(),
+        }
+    }
+
+    fn to_record(&self) -> PersistedBridgeState {
+        PersistedBridgeState {
+            paired_at_unix: self.paired_at_unix,
+            last_seen_at_unix: self.last_seen_at_unix,
+            last_origin: self.last_origin.clone(),
+        }
     }
 }
 
@@ -987,6 +1088,15 @@ fn pairing_snapshot(pairing: &PairingState, allowed_origin: Option<String>) -> P
             .filter(|expires_at| *expires_at >= now)
             .map(|expires_at| format!("unix:{expires_at}")),
         allowed_origin: Some(effective_allowed_origin),
+    }
+}
+
+fn bridge_snapshot(bridge: &BridgeState) -> BridgeSnapshot {
+    BridgeSnapshot {
+        connected: bridge.paired_at_unix.is_some(),
+        paired_at: bridge.paired_at_unix.map(|value| format!("unix:{value}")),
+        last_seen_at: bridge.last_seen_at_unix.map(|value| format!("unix:{value}")),
+        last_origin: bridge.last_origin.clone(),
     }
 }
 

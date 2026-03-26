@@ -29,6 +29,12 @@ export const fallbackBootstrap: BootstrapPayload = {
     rateLimitPerMinute: 120,
     tokenPreview: "abcd…wxyz",
   },
+  bridge: {
+    connected: true,
+    pairedAt: "unix:1774475400",
+    lastSeenAt: "unix:1774479000",
+    lastOrigin: "https://martpos.app",
+  },
   pairing: {
     active: false,
     code: null,

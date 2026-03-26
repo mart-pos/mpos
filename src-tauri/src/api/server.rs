@@ -333,6 +333,9 @@ async fn require_auth(
         state
             .consume_rate_limit(&format!("local_api:{path}"))
             .map_err(ApiError::too_many_requests)?;
+        state
+            .note_bridge_activity(origin)
+            .map_err(ApiError::internal)?;
         return Ok(next.run(request).await);
     }
 

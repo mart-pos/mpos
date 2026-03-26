@@ -25,6 +25,7 @@ pub struct StoragePaths {
 pub struct PersistedState {
     pub config: AppConfig,
     pub auth: AuthRecord,
+    pub bridge: PersistedBridgeState,
     pub printer_overrides: HashMap<String, PrinterOverride>,
 }
 
@@ -33,9 +34,18 @@ impl Default for PersistedState {
         Self {
             config: AppConfig::default(),
             auth: AuthRecord::new_local_token(),
+            bridge: PersistedBridgeState::default(),
             printer_overrides: HashMap::new(),
         }
     }
+}
+
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PersistedBridgeState {
+    pub paired_at_unix: Option<u64>,
+    pub last_seen_at_unix: Option<u64>,
+    pub last_origin: Option<String>,
 }
 
 #[derive(Clone)]
@@ -80,6 +90,7 @@ impl StorageRepository {
         let persisted = PersistedState {
             config: AppConfig::default(),
             auth: AuthRecord::new_local_token(),
+            bridge: PersistedBridgeState::default(),
             printer_overrides: HashMap::new(),
         };
         self.save(&persisted)?;

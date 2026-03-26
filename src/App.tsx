@@ -1,27 +1,31 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  BadgeCheckIcon,
+  AlertCircleIcon,
+  CheckCircle2Icon,
+  CheckIcon,
   CopyIcon,
-  InfoIcon,
-  LinkIcon,
+  ExternalLinkIcon,
+  LifeBuoyIcon,
   LoaderCircleIcon,
+  MoreHorizontalIcon,
   MoonStarIcon,
   PrinterIcon,
-  ReceiptTextIcon,
   RefreshCwIcon,
   Settings2Icon,
   SunIcon,
+  ZapIcon,
+  EyeIcon,
+  StarIcon,
 } from "lucide-react";
 
-import { CardTitle, PageTitle, SectionTitle, Text } from "@/components/Typography";
+import { CardTitle, Text } from "@/components/Typography";
 import { useTheme } from "@/components/theme-provider";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ButtonGroup } from "@/components/ui/button-group";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
 } from "@/components/ui/card";
 import {
@@ -31,8 +35,13 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -42,6 +51,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { fallbackBootstrap } from "./mocks/bootstrap";
 import type {
@@ -51,6 +61,8 @@ import type {
   ResolvedPrinter,
   ThemeMode,
 } from "./types/bootstrap";
+
+const appIconPath = "/icon.png";
 
 const printerTypes: PrinterType[] = [
   "thermal",
@@ -182,6 +194,35 @@ function paperLabel(value: PaperWidth) {
   }
 }
 
+function explainError(error: unknown, fallback: string) {
+  const text = String(error ?? "").trim();
+  if (!text) {
+    return fallback;
+  }
+
+  if (
+    text.includes("Failed to fetch") ||
+    text.includes("network") ||
+    text.includes("timed out")
+  ) {
+    return `${fallback} Revisa que MartPOS y MPOS Core esten abiertos en este mismo equipo.`;
+  }
+
+  if (text.includes("origin not allowed")) {
+    return "MartPOS intento conectar desde un origen no permitido. Revisa el entorno actual de MartPOS y vuelve a abrir la vinculacion.";
+  }
+
+  if (text.includes("invalid pairing code") || text.includes("pairing session")) {
+    return "La vinculacion vencio o ya no es valida. Genera un codigo nuevo y vuelve a intentar.";
+  }
+
+  if (text.includes("no default printer configured")) {
+    return "Todavia no hay una impresora principal. Elige una impresora lista para poder imprimir.";
+  }
+
+  return text;
+}
+
 function SwitchRow({
   label,
   helper,
@@ -219,7 +260,9 @@ function App() {
   const printInFlightRef = useRef(false);
   const [pairingLiveMode, setPairingLiveMode] = useState(false);
   const [pairingNowMs, setPairingNowMs] = useState(() => Date.now());
-  const [selectedPrinterId, setSelectedPrinterId] = useState<string | null>(null);
+  const [pairingCodeCopied, setPairingCodeCopied] = useState(false);
+  const [martposIssue, setMartposIssue] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileDialogPrinterId, setProfileDialogPrinterId] = useState<
     string | null
   >(null);
@@ -278,15 +321,22 @@ function App() {
     let cancelled = false;
     const sync = async () => {
       try {
-        const pairing = pairingLiveMode
-          ? await invoke<BootstrapPayload["pairing"]>("ensure_pairing_session")
-          : await invoke<BootstrapPayload["pairing"]>("get_pairing_status");
+        const payload = await invoke<BootstrapPayload>("get_bootstrap_state");
 
         if (!cancelled) {
-          setData((current) => ({ ...current, pairing }));
+          syncBootstrap(payload);
+          if (payload.bridge.connected) {
+            setMartposIssue(null);
+          }
+          if (!payload.pairing.active) {
+            setPairingLiveMode(false);
+          }
         }
       } catch {
         if (!cancelled) {
+          setMartposIssue(
+            "No pudimos confirmar la vinculacion con MartPOS. Si MartPOS ya estaba abierto, intenta abrir la vinculacion otra vez.",
+          );
           setMessage("No se pudo actualizar la vinculacion con MartPOS.");
         }
       }
@@ -359,7 +409,6 @@ function App() {
       theme: payload.config.theme,
     });
     setTheme(payload.config.theme);
-    setSelectedPrinterId((current) => current ?? payload.printers[0]?.id ?? null);
     setPrinterDraft((current) => {
       if (!current) {
         return null;
@@ -401,7 +450,7 @@ function App() {
       syncBootstrap(payload);
       setMessage("Impresora principal actualizada.");
     } catch (error) {
-      setMessage(String(error));
+      setMessage(explainError(error, "No se pudo guardar la impresora principal."));
     }
   }
 
@@ -430,7 +479,7 @@ function App() {
         setMessage(result.detail || "Prueba enviada a la impresora.");
       }
     } catch (error) {
-      setMessage(String(error));
+      setMessage(explainError(error, "No se pudo imprimir la prueba."));
     } finally {
       printInFlightRef.current = false;
     }
@@ -461,7 +510,7 @@ function App() {
         setMessage(result.detail || "Ultimo recibo real reenviado a impresion.");
       }
     } catch (error) {
-      setMessage(String(error));
+      setMessage(explainError(error, "No se pudo reimprimir el ultimo recibo."));
     } finally {
       printInFlightRef.current = false;
     }
@@ -484,7 +533,7 @@ function App() {
       syncBootstrap(payload);
       setMessage("Ajustes guardados.");
     } catch (error) {
-      setMessage(String(error));
+      setMessage(explainError(error, "No se pudieron guardar los ajustes."));
     }
   }
 
@@ -521,12 +570,11 @@ function App() {
       setMessage("Ajustes de impresora guardados.");
       setProfileDialogPrinterId(null);
     } catch (error) {
-      setMessage(String(error));
+      setMessage(explainError(error, "No se pudo guardar esta impresora."));
     }
   }
 
   function openProfileDialog(printer: ResolvedPrinter) {
-    setSelectedPrinterId(printer.id);
     setPrinterDraft(buildPrinterDraft(printer));
     setProfileDialogPrinterId(printer.id);
   }
@@ -537,9 +585,13 @@ function App() {
         await invoke<BootstrapPayload["pairing"]>("ensure_pairing_session");
       setData((current) => ({ ...current, pairing }));
       setPairingLiveMode(true);
+      setMartposIssue(null);
       setMessage("Codigo listo para vincular MartPOS.");
     } catch (error) {
-      setMessage(String(error));
+      setMartposIssue(
+        "No se pudo preparar la vinculacion. Cierra y vuelve a abrir MPOS Core si el problema sigue.",
+      );
+      setMessage(explainError(error, "No se pudo preparar la vinculacion con MartPOS."));
     }
   }
 
@@ -549,6 +601,10 @@ function App() {
     }
 
     await navigator.clipboard.writeText(data.pairing.code);
+    setPairingCodeCopied(true);
+    window.setTimeout(() => {
+      setPairingCodeCopied(false);
+    }, 1000);
     setMessage("Codigo copiado.");
   }
 
@@ -560,9 +616,13 @@ function App() {
       }>("launch_martpos_pairing");
       setData((current) => ({ ...current, pairing: result.pairing }));
       setPairingLiveMode(true);
+      setMartposIssue(null);
       setMessage("MartPOS se abrio para terminar la vinculacion.");
     } catch (error) {
-      setMessage(String(error));
+      setMartposIssue(
+        "No pudimos abrir MartPOS o terminar la vinculacion. Revisa que MartPOS este instalado y abierto en este mismo equipo.",
+      );
+      setMessage(explainError(error, "No se pudo abrir MartPOS."));
     }
   }
 
@@ -571,11 +631,12 @@ function App() {
       const payload = await invoke<BootstrapPayload>("regenerate_api_token");
       syncBootstrap(payload);
       setPairingLiveMode(false);
+      setMartposIssue(null);
       setMessage(
         "Se desvinculo MartPOS en este equipo. Para volver a conectarlo, haz pairing de nuevo.",
       );
     } catch (error) {
-      setMessage(String(error));
+      setMessage(explainError(error, "No se pudo desvincular MartPOS."));
     }
   }
 
@@ -583,520 +644,569 @@ function App() {
     (printer) => printer.id === data.config.defaultPrinterId,
   );
 
-  const selectedPrinter = useMemo(
-    () =>
-      data.printers.find((printer) => printer.id === selectedPrinterId) ??
-      data.printers[0],
-    [data.printers, selectedPrinterId],
-  );
-
   const profileDialogPrinter =
     data.printers.find((printer) => printer.id === profileDialogPrinterId) ?? null;
 
+  const onlinePrinters = data.printers.filter((printer) => printer.status === "online");
   const readyPrinters = data.printers.filter(
     (printer) => printer.status === "online" && printer.receiptCapable,
   ).length;
-  const bridgeReady = data.printers.some((printer) => printer.status === "online");
+  const firstReadyPrinter = data.printers.find(
+    (printer) => printer.status === "online" && printer.receiptCapable,
+  );
+  const setupSteps = [
+    {
+      label: "Vincular MartPOS",
+      done: data.bridge.connected,
+      detail: data.bridge.connected
+        ? "Listo"
+        : "Abre MartPOS y termina la vinculacion.",
+    },
+    {
+      label: "Detectar impresoras",
+      done: data.printers.length > 0,
+      detail:
+        data.printers.length > 0
+          ? `${data.printers.length} detectadas`
+          : "Conecta la impresora y refresca la lista.",
+    },
+    {
+      label: "Elegir impresora principal",
+      done: Boolean(defaultPrinter),
+      detail: defaultPrinter
+        ? defaultPrinter.name
+        : "Elige una impresora lista para recibos.",
+    },
+  ];
 
   return (
-    <main className="min-h-svh bg-transparent">
-      <div className="mx-auto flex min-h-svh w-full max-w-7xl flex-col gap-6 px-4 py-6 lg:px-6">
-        <section className="rounded-[28px] border border-border/70 bg-background/90 p-5 shadow-sm backdrop-blur-xl lg:p-6">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <Text variant="caption">
-                MPOS Core
-              </Text>
-              <PageTitle className="mt-2">
-                {bridgeReady ? "Todo listo para cobrar" : "Preparemos la impresion"}
-              </PageTitle>
-              <Text variant="muted" className="mt-2 max-w-2xl">
-                Conecta MartPOS, elige la impresora principal y haz una prueba. Esta
-                app debe resolverse desde una sola pantalla.
-              </Text>
-            </div>
+    <main className="min-h-screen bg-background">
+      <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-4xl items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-3">
+            <img
+              src={appIconPath}
+              alt="MPOS Core"
+              className="size-10 rounded-lg object-cover"
+            />
+          </div>
 
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={refreshPrinters}
-                disabled={loading || refreshCooldownSeconds > 0}
-              >
-                {loading ? <LoaderCircleIcon className="animate-spin" /> : <RefreshCwIcon />}
+          <div className="flex items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-11 cursor-pointer"
+                  onClick={refreshPrinters}
+                  disabled={loading || refreshCooldownSeconds > 0}
+                >
+                  {loading ? <LoaderCircleIcon className="animate-spin" /> : <RefreshCwIcon />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent sideOffset={8}>
                 {refreshCooldownSeconds > 0
                   ? `Refrescar en ${refreshCooldownSeconds}s`
                   : "Refrescar"}
-              </Button>
-              <Button type="button" variant="outline" onClick={handleLaunchMartposPairing}>
-                <LinkIcon />
-                Conectar MartPOS
-              </Button>
+              </TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-11 cursor-pointer"
+                  onClick={handleLaunchMartposPairing}
+                >
+                  <ExternalLinkIcon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent sideOffset={8}>Abrir MartPOS</TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-11 cursor-pointer"
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  <Settings2Icon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent sideOffset={8}>Configuracion</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-6">
+        {(!data.bridge.connected || data.printers.length === 0 || !defaultPrinter) ? (
+          <Card className="order-0">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-base">Primeros pasos</CardTitle>
+              <Text variant="muted">
+                Deja esta computadora lista en tres pasos simples.
+              </Text>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {setupSteps.map((step) => (
+                <div
+                  key={step.label}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-border/70 px-4 py-3"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`mt-0.5 flex size-6 items-center justify-center rounded-full ${step.done ? "bg-emerald-500/15 text-emerald-600" : "bg-muted text-muted-foreground"}`}>
+                      {step.done ? <CheckIcon className="size-4" /> : <span className="text-xs font-semibold">•</span>}
+                    </div>
+                    <div>
+                      <Text weight="medium">{step.label}</Text>
+                      <Text variant="caption" className="mt-0.5">
+                        {step.detail}
+                      </Text>
+                    </div>
+                  </div>
+                  {!step.done && step.label === "Vincular MartPOS" ? (
+                    <Button type="button" variant="outline" onClick={handleLaunchMartposPairing}>
+                      Abrir MartPOS
+                    </Button>
+                  ) : null}
+                  {!step.done && step.label === "Detectar impresoras" ? (
+                    <Button type="button" variant="outline" onClick={refreshPrinters} disabled={loading || refreshCooldownSeconds > 0}>
+                      Refrescar
+                    </Button>
+                  ) : null}
+                  {!step.done && step.label === "Elegir impresora principal" && firstReadyPrinter ? (
+                    <Button type="button" variant="outline" onClick={() => void handleSetDefault(firstReadyPrinter.id)}>
+                      Usar {firstReadyPrinter.name}
+                    </Button>
+                  ) : null}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ) : null}
+
+        <Card className={data.bridge.connected ? "order-2" : "order-1"}>
+          <CardHeader className="pb-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <CardTitle className="text-base">Conectar con MartPOS</CardTitle>
+                <Text variant="muted">{data.bridge.connected ? "Esta app ya esta vinculada con MartPOS." : data.pairing.active ? "Hay una vinculacion activa lista para completar." : "Usa el boton automatico. El codigo solo queda como respaldo."}</Text>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button type="button" size="lg" onClick={handleLaunchMartposPairing}>
+                  <ExternalLinkIcon />
+                  {data.bridge.connected ? "Abrir MartPOS" : "Pair con MartPOS"}
+                </Button>
+                <Button type="button" size="lg" variant="outline" onClick={handleForgetBridge}>
+                  Olvidar bridge
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            {martposIssue && !data.bridge.connected ? (
+              <div className="flex items-start gap-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-amber-800 dark:text-amber-200">
+                <AlertCircleIcon className="mt-0.5 size-4 shrink-0" />
+                <div>
+                  <Text weight="medium">MartPOS necesita atencion</Text>
+                  <Text variant="caption" className="mt-1">
+                    {martposIssue}
+                  </Text>
+                </div>
+              </div>
+            ) : null}
+
+            {!data.bridge.connected ? (
+              <div className="rounded-lg bg-secondary/50 p-4">
+                <div className="flex items-start gap-3">
+                  <div
+                    className={`flex size-8 shrink-0 items-center justify-center rounded-md ${
+                      data.pairing.active ? "bg-accent/10" : "bg-primary/10"
+                    }`}
+                  >
+                    {data.pairing.active ? (
+                      <CheckCircle2Icon className="size-4 text-accent" />
+                    ) : (
+                      <ZapIcon className="size-4 text-primary" />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <Text weight="medium">
+                      {data.pairing.active
+                        ? "Lista para conectar"
+                        : "Vinculacion automatica"}
+                    </Text>
+                    <Text variant="caption" className="mt-2">
+                      {data.pairing.active
+                        ? "El codigo actual esta listo para vincular MartPOS en este equipo."
+                        : "Abre MartPOS y termina la conexion sin copiar rutas ni direcciones."}
+                    </Text>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {!data.bridge.connected ? (
+            <div className="rounded-lg bg-secondary/50 p-4">
+              <Text weight="medium">Codigo de respaldo</Text>
+              <Text variant="caption" className="mt-0.5">
+                Si la vinculacion automatica falla, usa este codigo una sola vez en MartPOS.
+              </Text>
+              <div className="mt-3 flex items-center gap-4">
+                <Text className="font-mono text-2xl font-semibold">
+                  {data.pairing.code ?? "------"}
+                </Text>
+              </div>
+              <Text variant="caption" className="mt-2">
+                {data.pairing.active
+                  ? `Disponible por ${formatPairingCountdown(data.pairing.expiresAt, pairingNowMs)}.`
+                  : "Abre una nueva vinculacion para generar un codigo."}
+              </Text>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button type="button" size="lg" variant="outline" onClick={handleOpenPairing}>
+                  Generar codigo
+                </Button>
+                <Button
+                  type="button"
+                  size="lg"
+                  variant="ghost"
+                  onClick={() => void handleCopyPairingCode()}
+                  disabled={!data.pairing.code}
+                >
+                  {pairingCodeCopied ? (
+                    <CheckIcon className="text-emerald-600 transition-all animate-in zoom-in-95" />
+                  ) : (
+                    <CopyIcon />
+                  )}
+                  Copiar
+                </Button>
+              </div>
+            </div>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card className={data.bridge.connected ? "order-1" : "order-2"}>
+          <CardHeader className="pb-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <CardTitle className="text-base">Impresoras</CardTitle>
+                <Text variant="muted">
+                  Gestiona tus impresoras conectadas. {readyPrinters} de {data.printers.length} listas.
+                </Text>
+              </div>
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => handlePrintTest(defaultPrinter?.id)}
-                disabled={printInFlightRef.current || printCooldownActive}
+                size="lg"
+                onClick={() => handlePrintLastReceipt(defaultPrinter)}
+                disabled={!defaultPrinter || printInFlightRef.current || printCooldownActive}
               >
                 <PrinterIcon />
-                Imprimir prueba
+                Reimprimir ultimo recibo
               </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            {data.printers.length > 0 && !defaultPrinter ? (
+              <div className="flex items-start justify-between gap-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3">
+                <div>
+                  <Text weight="medium">Falta una impresora principal</Text>
+                  <Text variant="caption" className="mt-1">
+                    Elige una impresora lista para recibos antes de imprimir desde MartPOS.
+                  </Text>
+                </div>
+                {firstReadyPrinter ? (
+                  <Button type="button" variant="outline" onClick={() => void handleSetDefault(firstReadyPrinter.id)}>
+                    Usar sugerida
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+
+            {data.printers.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border p-6">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <Text weight="medium">Todavia no encontramos impresoras</Text>
+                    <Text variant="caption" className="mt-1">
+                      Conecta la impresora, enciendela y luego refresca la lista. Si es USB, revisa que este conectada directo a esta computadora.
+                    </Text>
+                    <div className="mt-3 flex flex-col gap-1 text-sm text-muted-foreground">
+                      <span>1. Conecta la impresora y enciendela.</span>
+                      <span>2. Espera unos segundos para que el sistema la detecte.</span>
+                      <span>3. Pulsa refrescar.</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="lg" onClick={refreshPrinters} disabled={loading || refreshCooldownSeconds > 0}>
+                      <RefreshCwIcon />
+                      Refrescar
+                    </Button>
+                    <Button type="button" size="lg" variant="outline" onClick={() => setSettingsOpen(true)}>
+                      <Settings2Icon />
+                      Abrir soporte
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {data.printers.map((printer) => (
+              <div key={printer.id} className="rounded-lg border border-border p-4">
+                <div className="mb-4 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex size-10 items-center justify-center rounded-lg bg-secondary">
+                      <PrinterIcon className="size-5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <Text weight="medium">{printer.name}</Text>
+                      <Text variant="caption">
+                        {printer.manufacturer ?? "Marca no identificada"}
+                        {printer.model ? ` · ${printer.model}` : ""}
+                      </Text>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {printer.isDefault ? (
+                      <Badge variant="secondary" className="text-xs">
+                        Principal
+                      </Badge>
+                    ) : null}
+                    <Badge variant="outline" className={`text-xs ${statusTone(printer.status)}`}>
+                      {statusText(printer.status)}
+                    </Badge>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreHorizontalIcon className="size-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="min-w-[250px]">
+                        <DropdownMenuItem onClick={() => handleSetDefault(printer.id)}>
+                          <StarIcon />
+                          Usar como principal
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => openProfileDialog(printer)}
+                        >
+                          <EyeIcon />
+                          Ver detalles
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => handlePrintTest(printer.id)}
+                          disabled={printInFlightRef.current || printCooldownActive}
+                        >
+                          <PrinterIcon />
+                          Imprimir ticket de prueba
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => handlePrintLastReceipt(printer)}
+                          disabled={printInFlightRef.current || printCooldownActive}
+                        >
+                          <RefreshCwIcon />
+                          Reimprimir ultimo recibo
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 border-t border-border pt-4 text-sm md:grid-cols-3 xl:grid-cols-6">
+                  <div>
+                    <Text variant="caption" className="mb-1">
+                      Tipo
+                    </Text>
+                    <Text weight="medium">{typeLabel(printer.type)}</Text>
+                  </div>
+                  <div>
+                    <Text variant="caption" className="mb-1">
+                      Papel
+                    </Text>
+                    <Text weight="medium">{paperLabel(printer.paperWidthMm)}</Text>
+                  </div>
+                  <div>
+                    <Text variant="caption" className="mb-1">
+                      Conexion
+                    </Text>
+                    <Text weight="medium">{connectionLabel(printer.connectionType)}</Text>
+                  </div>
+                  <div>
+                    <Text variant="caption" className="mb-1">
+                      Driver
+                    </Text>
+                    <Text weight="medium">
+                      {printer.driver}
+                    </Text>
+                  </div>
+                  <div>
+                    <Text variant="caption" className="mb-1">
+                      Cola
+                    </Text>
+                    <Text weight="medium">
+                      {printer.systemQueue ?? "No aplica"}
+                    </Text>
+                  </div>
+                  <div>
+                    <Text variant="caption" className="mb-1">
+                      Soporte
+                    </Text>
+                    <Text weight="medium">
+                      {printer.receiptCapable ? "Recibos" : "General"}
+                    </Text>
+                  </div>
+                  <div>
+                    <Text variant="caption" className="mb-1">
+                      Corte / QR
+                    </Text>
+                    <Text weight="medium">
+                      {printer.profile.supportsCut ? "Corte" : "Sin corte"} ·{" "}
+                      {printer.profile.supportsQr || printer.profile.supportsBarcode
+                        ? "QR/Barras"
+                        : "Basico"}
+                    </Text>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <details className="order-3 rounded-lg border border-border bg-card">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4">
+            <div className="flex items-center gap-3">
+              <LifeBuoyIcon className="size-4 text-muted-foreground" />
+              <div>
+                <Text weight="medium">Diagnostico y soporte</Text>
+                <Text variant="caption">
+                  Solo abre esto si necesitas revisar conexion o impresoras.
+                </Text>
+              </div>
+            </div>
+            <Text variant="caption">Abrir</Text>
+          </summary>
+          <div className="grid gap-3 border-t border-border px-5 py-4 text-sm md:grid-cols-2">
+            <div>
+              <Text variant="caption">Estado MartPOS</Text>
+              <Text className="mt-1">
+                {data.bridge.connected ? "Vinculado" : "Pendiente de vinculacion"}
+              </Text>
+            </div>
+            <div>
+              <Text variant="caption">API local</Text>
+              <Text className="mt-1">{data.apiServer.baseUrl}</Text>
+            </div>
+            <div>
+              <Text variant="caption">Origen permitido</Text>
+              <Text className="mt-1">{data.config.allowedOrigin ?? "Sin definir"}</Text>
+            </div>
+            <div>
+              <Text variant="caption">Impresora principal</Text>
+              <Text className="mt-1">{defaultPrinter?.name ?? "Sin definir"}</Text>
+            </div>
+            <div>
+              <Text variant="caption">Impresoras listas</Text>
+              <Text className="mt-1">{readyPrinters} de {onlinePrinters.length} en linea</Text>
+            </div>
+            <div>
+              <Text variant="caption">Logs</Text>
+              <Text className="mt-1 break-all">{data.storage.logs.directory}</Text>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Configuracion</DialogTitle>
+            <DialogDescription>
+              Ajustes simples para el uso diario.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-4">
+            <div className="space-y-2">
+              <Text asChild weight="medium">
+                <label>Idioma</label>
+              </Text>
+              <Input
+                value={configDraft.locale}
+                onChange={(event) =>
+                  setConfigDraft((current) => ({
+                    ...current,
+                    locale: event.target.value,
+                  }))
+                }
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Text asChild weight="medium">
+                <label>Tema</label>
+              </Text>
+              <Select
+                value={configDraft.theme}
+                onValueChange={(value) => {
+                  const next = value as ThemeMode;
+                  setTheme(next);
+                  setConfigDraft((current) => ({ ...current, theme: next }));
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Selecciona un tema" />
+                </SelectTrigger>
+                <SelectContent>
+                  {themeModes.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {value}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-2">
               <Button
                 type="button"
-                variant="ghost"
-                size="icon"
+                variant="outline"
                 onClick={() => {
                   const next = theme === "dark" ? "light" : "dark";
                   setTheme(next);
                   setConfigDraft((current) => ({ ...current, theme: next }));
                 }}
-                aria-label="Cambiar tema"
               >
                 {theme === "dark" ? <MoonStarIcon /> : <SunIcon />}
+                Cambiar tema rapido
               </Button>
-              <Dialog>
-                <DialogTrigger asChild>
-                  <Button type="button" variant="ghost" size="icon" aria-label="Como funciona">
-                    <InfoIcon />
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-lg">
-                  <DialogHeader>
-                    <DialogTitle>Como funciona</DialogTitle>
-                    <DialogDescription>
-                      Lo importante
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="grid gap-3">
-                    <div className="rounded-2xl border border-border/70 bg-muted/30 p-4">
-                      <CardTitle>1. Conectar MartPOS</CardTitle>
-                      <Text variant="muted" className="mt-2">
-                        Vincula la tienda web en un clic o usando el codigo.
-                      </Text>
-                    </div>
-                    <div className="rounded-2xl border border-border/70 bg-muted/30 p-4">
-                      <CardTitle>2. Elegir impresora principal</CardTitle>
-                      <Text variant="muted" className="mt-2">
-                        Marca una impresora como principal y deja la caja lista.
-                      </Text>
-                    </div>
-                    <div className="rounded-2xl border border-border/70 bg-muted/30 p-4">
-                      <CardTitle>3. Probar impresion</CardTitle>
-                      <Text variant="muted" className="mt-2">
-                        Imprime una prueba y verifica corte, ancho y claridad.
-                      </Text>
-                    </div>
-                  </div>
-                </DialogContent>
-              </Dialog>
             </div>
           </div>
 
-          <div className="mt-6 grid gap-4 lg:grid-cols-3">
-            <Card className="border-none bg-card/90 shadow-none ring-1 ring-border/70">
-              <CardHeader>
-                <CardDescription>Impresora principal</CardDescription>
-                <SectionTitle>{defaultPrinter?.name ?? "Sin seleccionar"}</SectionTitle>
-              </CardHeader>
-              <CardContent>
-                <Text variant="muted">
-                  {defaultPrinter
-                    ? `${typeLabel(defaultPrinter.type)} · ${paperLabel(defaultPrinter.paperWidthMm)}`
-                    : "Selecciona una impresora para que la caja imprima sin preguntar."}
-                </Text>
-              </CardContent>
-            </Card>
-
-            <Card className="border-none bg-card/90 shadow-none ring-1 ring-border/70">
-              <CardHeader>
-                <CardDescription>Impresoras listas</CardDescription>
-                <SectionTitle>{String(readyPrinters)}</SectionTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-2">
-                  <BadgeCheckIcon className="size-4 text-primary" />
-                  <Text variant="muted">
-                    {readyPrinters > 0
-                      ? "Hay al menos una impresora lista para trabajar."
-                      : "No encontramos una impresora lista todavia."}
-                  </Text>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-none bg-card/90 shadow-none ring-1 ring-border/70">
-              <CardHeader>
-                <CardDescription>Vinculacion con MartPOS</CardDescription>
-                <SectionTitle>
-                  {data.pairing.active ? "Lista para conectar" : "Pendiente"}
-                </SectionTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Text variant="muted">
-                  {data.pairing.active
-                    ? `Codigo activo por ${formatPairingCountdown(
-                        data.pairing.expiresAt,
-                        pairingNowMs,
-                      )}.`
-                    : "Abre la vinculacion cuando quieras conectar la tienda web."}
-                </Text>
-                <div className="group relative rounded-2xl border border-border/70 bg-muted/30 px-4 py-3">
-                  <Text variant="caption">
-                    Codigo
-                  </Text>
-                  <div className="mt-1 flex items-center justify-between gap-3">
-                    <Text className="font-mono text-lg font-semibold">
-                      {data.pairing.code ?? "------"}
-                    </Text>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="opacity-0 transition-opacity group-hover:opacity-100"
-                      onClick={() => void handleCopyPairingCode()}
-                      disabled={!data.pairing.code}
-                      aria-label="Copiar codigo"
-                    >
-                      <CopyIcon />
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </section>
-
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
-          <Card className="border-none bg-card/90 shadow-none ring-1 ring-border/70">
-            <CardHeader>
-              <SectionTitle>Conectar con MartPOS</SectionTitle>
-              <CardDescription>
-                Usa el boton automatico. El codigo solo queda como respaldo.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-2xl border border-primary/15 bg-primary/5 p-4">
-                <CardTitle>Vinculacion automatica</CardTitle>
-                <Text variant="muted" className="mt-2">
-                  Abre MartPOS y termina la conexion sin copiar rutas ni direcciones.
-                </Text>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Button type="button" onClick={handleLaunchMartposPairing}>
-                    <LinkIcon />
-                    Pair con MartPOS
-                  </Button>
-                  <Button type="button" variant="outline" onClick={handleForgetBridge}>
-                    Olvidar bridge
-                  </Button>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-border/70 bg-muted/30 p-4">
-                <CardTitle>Codigo de respaldo</CardTitle>
-                <Text variant="muted" className="mt-2">
-                  Si la vinculacion automatica falla, usa este codigo una sola vez en
-                  MartPOS.
-                </Text>
-                <Text className="mt-4 text-4xl font-semibold">
-                  {data.pairing.code ?? "------"}
-                </Text>
-                <Text variant="muted" className="mt-3">
-                  {data.pairing.active
-                    ? `Disponible por ${formatPairingCountdown(
-                        data.pairing.expiresAt,
-                        pairingNowMs,
-                      )}.`
-                    : "Abre una nueva vinculacion para generar un codigo."}
-                </Text>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" onClick={handleOpenPairing}>
-                    Generar codigo
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => void handleCopyPairingCode()}
-                    disabled={!data.pairing.code}
-                  >
-                    <CopyIcon />
-                    Copiar
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </section>
-
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="flex flex-col gap-4">
-            <Card className="border-none bg-card/90 shadow-none ring-1 ring-border/70">
-              <CardHeader>
-                <SectionTitle>Impresora principal</SectionTitle>
-                <CardDescription>
-                  Elige la impresora que MPOS usara por defecto.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3">
-                {defaultPrinter ? (
-                  <div className="rounded-2xl border border-border/70 bg-muted/30 p-4">
-                    <SectionTitle>{defaultPrinter.name}</SectionTitle>
-                    <Text variant="muted" className="mt-2">
-                      {typeLabel(defaultPrinter.type)} · {paperLabel(defaultPrinter.paperWidthMm)} ·{" "}
-                      {connectionLabel(defaultPrinter.connectionType)}
-                    </Text>
-                  </div>
-                ) : (
-                  <Text variant="muted">
-                    Aun no has seleccionado una impresora principal.
-                  </Text>
-                )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => handlePrintLastReceipt(defaultPrinter)}
-                  disabled={!defaultPrinter || printInFlightRef.current || printCooldownActive}
-                >
-                  <ReceiptTextIcon />
-                  Reimprimir ultimo recibo
-                </Button>
-              </CardContent>
-            </Card>
-
-            {data.printers.length === 0 ? (
-              <Card className="border-none bg-card/90 shadow-none ring-1 ring-border/70">
-                <CardContent className="py-10 text-center">
-                  <SectionTitle>Aun no encontramos impresoras</SectionTitle>
-                  <Text variant="muted" className="mt-2">
-                    Revisa la conexion y usa el boton Refrescar.
-                  </Text>
-                </CardContent>
-              </Card>
-            ) : null}
-
-            {data.printers.map((printer) => (
-              <Card
-                key={printer.id}
-                className="border-none bg-card/90 shadow-none ring-1 ring-border/70"
-              >
-                <CardHeader className="gap-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <SectionTitle className="flex items-center gap-2">
-                        <PrinterIcon className="size-4" />
-                        {printer.name}
-                      </SectionTitle>
-                      <Text variant="muted">
-                        {printer.manufacturer ?? "Marca no identificada"}
-                        {printer.model ? ` · ${printer.model}` : ""}
-                      </Text>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      {printer.isDefault ? (
-                        <span className="rounded-full border border-primary/15 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-                          Principal
-                        </span>
-                      ) : null}
-                      <span
-                        className={`rounded-full border px-3 py-1 text-xs font-medium ${statusTone(printer.status)}`}
-                      >
-                        {statusText(printer.status)}
-                      </span>
-                    </div>
-                  </div>
-                </CardHeader>
-
-                <CardContent className="flex flex-col gap-4">
-                  <div className="grid gap-3 md:grid-cols-4">
-                    <div>
-                      <Text variant="caption">
-                        Tipo
-                      </Text>
-                      <Text className="mt-1">{typeLabel(printer.type)}</Text>
-                    </div>
-                    <div>
-                      <Text variant="caption">
-                        Papel
-                      </Text>
-                      <Text className="mt-1">{paperLabel(printer.paperWidthMm)}</Text>
-                    </div>
-                    <div>
-                      <Text variant="caption">
-                        Conexion
-                      </Text>
-                      <Text className="mt-1">{connectionLabel(printer.connectionType)}</Text>
-                    </div>
-                    <div>
-                      <Text variant="caption">
-                        Uso
-                      </Text>
-                      <Text className="mt-1">
-                        {printer.receiptCapable ? "Lista para recibos" : "Uso general"}
-                      </Text>
-                    </div>
-                  </div>
-
-                  <ButtonGroup className="flex-wrap">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setSelectedPrinterId(printer.id)}
-                    >
-                      Ver detalle
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => handleSetDefault(printer.id)}
-                    >
-                      Usar como principal
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => handlePrintTest(printer.id)}
-                      disabled={printInFlightRef.current || printCooldownActive}
-                    >
-                      Probar
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={() => handlePrintLastReceipt(printer)}
-                      disabled={printInFlightRef.current || printCooldownActive}
-                    >
-                      Reimprimir ultimo recibo
-                    </Button>
-                  </ButtonGroup>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          <div className="flex flex-col gap-4">
-            <Card className="border-none bg-card/90 shadow-none ring-1 ring-border/70">
-              <CardHeader>
-                <SectionTitle>Detalle rapido</SectionTitle>
-                <CardDescription>
-                  Ajustes comunes para la impresora seleccionada.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4">
-                {selectedPrinter ? (
-                  <>
-                    <div className="rounded-2xl border border-border/70 bg-muted/30 p-4">
-                      <SectionTitle>{selectedPrinter.name}</SectionTitle>
-                      <Text variant="muted" className="mt-1">
-                        {selectedPrinter.isDefault
-                          ? "Es la impresora principal"
-                          : "Aun no es la principal"}
-                      </Text>
-                    </div>
-
-                    <div className="grid gap-3">
-                      <div className="rounded-xl border border-border/70 p-3">
-                        <Text variant="caption">
-                          Papel recomendado
-                        </Text>
-                        <Text className="mt-1">
-                          {paperLabel(selectedPrinter.profile.paperWidthMm)}
-                        </Text>
-                      </div>
-                      <div className="rounded-xl border border-border/70 p-3">
-                        <Text variant="caption">
-                          Corte automatico
-                        </Text>
-                        <Text className="mt-1">
-                          {selectedPrinter.profile.supportsCut ? "Si" : "No"}
-                        </Text>
-                      </div>
-                      <div className="rounded-xl border border-border/70 p-3">
-                        <Text variant="caption">
-                          QR y codigo de barras
-                        </Text>
-                        <Text className="mt-1">
-                          {selectedPrinter.profile.supportsQr ||
-                          selectedPrinter.profile.supportsBarcode
-                            ? "Disponible"
-                            : "No disponible"}
-                        </Text>
-                      </div>
-                    </div>
-
-                    <Button
-                      type="button"
-                      className="w-full"
-                      onClick={() => openProfileDialog(selectedPrinter)}
-                    >
-                      Ajustar impresora
-                    </Button>
-                  </>
-                ) : (
-                  <Text variant="muted">
-                    Selecciona una impresora para ver sus detalles.
-                  </Text>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="border-none bg-card/90 shadow-none ring-1 ring-border/70">
-              <CardHeader>
-                <SectionTitle>Preferencias</SectionTitle>
-                <CardDescription>
-                  Ajustes simples para el uso diario.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Text asChild weight="medium">
-                    <label>Idioma</label>
-                  </Text>
-                  <Input
-                    value={configDraft.locale}
-                    onChange={(event) =>
-                      setConfigDraft((current) => ({
-                        ...current,
-                        locale: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Text asChild weight="medium">
-                    <label>Tema</label>
-                  </Text>
-                  <Select
-                    value={configDraft.theme}
-                    onValueChange={(value) => {
-                      const next = value as ThemeMode;
-                      setTheme(next);
-                      setConfigDraft((current) => ({ ...current, theme: next }));
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Selecciona un tema" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {themeModes.map((value) => (
-                        <SelectItem key={value} value={value}>
-                          {value}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" onClick={handleSaveConfig}>
-                    <Settings2Icon />
-                    Guardar ajustes
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </section>
-      </div>
+          <DialogFooter>
+            <Button type="button" size="lg" variant="outline" onClick={() => setSettingsOpen(false)}>
+              Cerrar
+            </Button>
+            <Button
+              type="button"
+              size="lg"
+              onClick={async () => {
+                await handleSaveConfig();
+                setSettingsOpen(false);
+              }}
+            >
+              Guardar ajustes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={profileDialogPrinter !== null && printerDraft !== null}
@@ -1291,6 +1401,7 @@ function App() {
           <DialogFooter>
             <Button
               type="button"
+              size="lg"
               variant="outline"
               onClick={() => {
                 if (profileDialogPrinter) {
@@ -1303,12 +1414,13 @@ function App() {
             </Button>
             <Button
               type="button"
+              size="lg"
               variant="outline"
               onClick={() => setProfileDialogPrinterId(null)}
             >
               Cancelar
             </Button>
-            <Button type="button" onClick={handleSavePrinterProfile}>
+            <Button type="button" size="lg" onClick={handleSavePrinterProfile}>
               Guardar
             </Button>
           </DialogFooter>

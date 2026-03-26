@@ -33,6 +33,13 @@ export interface AuthState {
   tokenPreview: string;
 }
 
+export interface BridgeState {
+  connected: boolean;
+  pairedAt: string | null;
+  lastSeenAt: string | null;
+  lastOrigin: string | null;
+}
+
 export interface PairingState {
   active: boolean;
   code: string | null;
@@ -147,6 +154,7 @@ export interface BootstrapPayload {
   config: AppConfig;
   apiServer: ApiServerConfig;
   auth: AuthState;
+  bridge: BridgeState;
   pairing: PairingState;
   storage: StorageOverview;
   printing: PrintingOverview;
