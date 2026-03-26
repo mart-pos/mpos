@@ -31,6 +31,11 @@ function walk(path, entries = []) {
     const stats = statSync(fullPath);
 
     if (stats.isDirectory()) {
+      if (fullPath.endsWith(".app")) {
+        entries.push(fullPath);
+        continue;
+      }
+
       walk(fullPath, entries);
       continue;
     }
@@ -65,6 +70,13 @@ const copied = [];
 for (const filePath of walk(bundleRoot)) {
   if (!isBundleFile(filePath)) {
     continue;
+  }
+
+   if (process.platform === "darwin" && filePath.endsWith(".zip")) {
+    const appName = filePath.slice(0, -4);
+    if (existsSync(appName)) {
+      continue;
+    }
   }
 
   const relDir = relative(bundleRoot, dirname(filePath));
