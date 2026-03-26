@@ -7,6 +7,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "bundle": "pnpm tauri build && node scripts/collect-artifacts.mjs",
+    "bundle:mac": "pnpm tauri build --bundles app && node scripts/collect-artifacts.mjs",
+    "bundle:linux": "pnpm tauri build --bundles appimage,deb,rpm && node scripts/collect-artifacts.mjs",
+    "bundle:windows": "pnpm tauri build --bundles nsis,msi && node scripts/collect-artifacts.mjs",
+    "artifacts:collect": "node scripts/collect-artifacts.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
