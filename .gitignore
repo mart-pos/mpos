@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local Codex / agent workspace files
+.agents/
+skills-lock.json

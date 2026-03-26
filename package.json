@@ -1,7 +1,8 @@
 {
-  "name": "mpos-app",
-  "private": true,
+  "name": "mpos-core",
   "version": "0.1.0",
+  "description": "Local desktop bridge between MartPOS and receipt printers.",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

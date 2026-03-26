@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "mpos-app",
+  "productName": "MPOS Core",
   "version": "0.1.0",
-  "identifier": "com.jeffersonlopez.mpos-app",
+  "identifier": "app.mpos.core",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "mpos-app",
+        "title": "MPOS Core",
         "width": 800,
         "height": 600
       }
