@@ -12,10 +12,12 @@
   "app": {
     "windows": [
       {
-        "title": "MPOS Core",
-        "titleBarStyle": "Visible",
-        "width": 800,
-        "height": 600
+        "title": "",
+        "titleBarStyle": "Transparent",
+        "minWidth": 760,
+        "minHeight": 620,
+        "width": 760,
+        "height": 620
       }
     ],
     "security": {
