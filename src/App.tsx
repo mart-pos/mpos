@@ -1149,10 +1149,7 @@ function App() {
                           <MoreHorizontalIcon className="size-4" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent
-                        align="end"
-                        className="min-w-[250px]"
-                      >
+                      <DropdownMenuContent align="end" className="min-w-62.5">
                         <DropdownMenuItem
                           onClick={() => handleSetDefault(printer.id)}
                         >
@@ -1344,7 +1341,6 @@ function App() {
                 </SelectContent>
               </Select>
             </div>
-
           </div>
 
           <DialogFooter>
@@ -1368,7 +1364,7 @@ function App() {
           }
         }}
       >
-        <DialogContent className="flex h-[500px] max-w-3xl flex-col">
+        <DialogContent className="flex h-125 max-w-3xl flex-col">
           <DialogHeader>
             <DialogTitle>
               Ajustar {profileDialogPrinter?.name ?? "impresora"}
