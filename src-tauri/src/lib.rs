@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use app::state::AppState;
 use tauri::Manager;
+use tokio::time::{sleep, Duration};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -27,12 +28,21 @@ pub fn run() {
                 }
             });
 
+            let refresh_state = Arc::clone(&state);
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    sleep(Duration::from_secs(4)).await;
+                    let _ = refresh_state.request_refresh();
+                }
+            });
+
             app.manage(state);
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             app::commands::get_bootstrap_state,
+            app::commands::get_realtime_socket_url,
             app::commands::refresh_printers,
             app::commands::set_default_printer,
             app::commands::print_test_ticket,

@@ -1,13 +1,17 @@
 use std::net::SocketAddr;
 
 use axum::{
-    extract::{Request, State},
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Request, State,
+    },
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
+use tokio::sync::broadcast;
 
 use crate::{
     app::state::{
@@ -50,6 +54,8 @@ pub struct ApiIndexResponse {
     pub health: &'static str,
     pub pairing_status: &'static str,
     pub pairing_exchange: &'static str,
+    pub bridge_forget: &'static str,
+    pub events: &'static str,
     pub note: &'static str,
 }
 
@@ -122,6 +128,8 @@ pub async fn run_http_server(state: SharedAppState) -> Result<(), String> {
         .route("/print/test", post(post_print_test))
         .route("/print/receipt", post(post_print_receipt))
         .route("/print/raw", post(post_print_raw))
+        .route("/bridge/forget", post(post_forget_bridge))
+        .route("/events", get(get_events_socket))
         .route("/config", get(get_config).patch(update_config))
         .with_state(state.clone())
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
@@ -177,6 +185,8 @@ fn build_api_index(state: SharedAppState) -> Json<ApiIndexResponse> {
         health: "/api/v1/health",
         pairing_status: "/api/v1/pairing/status",
         pairing_exchange: "/api/v1/pairing/exchange",
+        bridge_forget: "/api/v1/bridge/forget",
+        events: "/api/v1/events",
         note: "Protected routes require Origin and local token headers.",
     })
 }
@@ -291,6 +301,56 @@ async fn post_print_raw(
         .map_err(ApiError::bad_request)
 }
 
+async fn post_forget_bridge(
+    State(state): State<SharedAppState>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state.forget_bridge().map_err(ApiError::internal)?;
+
+    Ok(Json(ApiMessage {
+        message: "bridge forgotten".into(),
+    }))
+}
+
+async fn get_events_socket(
+    ws: WebSocketUpgrade,
+    State(state): State<SharedAppState>,
+) -> Response {
+    ws.on_upgrade(move |socket| handle_events_socket(socket, state))
+}
+
+async fn handle_events_socket(mut socket: WebSocket, state: SharedAppState) {
+    if let Ok(initial) = state.current_event_payload("snapshot") {
+        if socket.send(Message::Text(initial.into())).await.is_err() {
+            return;
+        }
+    }
+
+    let mut receiver = state.subscribe_events();
+
+    loop {
+        tokio::select! {
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Ping(payload))) => {
+                    if socket.send(Message::Pong(payload)).await.is_err() {
+                        break;
+                    }
+                }
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                _ => {}
+            },
+            outbound = receiver.recv() => match outbound {
+                Ok(payload) => {
+                    if socket.send(Message::Text(payload.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    }
+}
+
 async fn post_update_printer_profile(
     State(state): State<SharedAppState>,
     Json(payload): Json<UpdatePrinterRequest>,
@@ -314,7 +374,10 @@ async fn require_auth(
     }
 
     let header_name = state.auth_header_name();
-    let provided = headers.get(header_name.as_str()).and_then(|value| value.to_str().ok());
+    let provided = headers
+        .get(header_name.as_str())
+        .and_then(|value| value.to_str().ok())
+        .or_else(|| extract_query_token(request.uri().query()));
     let origin = headers.get("origin").and_then(|value| value.to_str().ok());
 
     if let Some(allowed_origin) = state.allow_origin() {
@@ -346,6 +409,17 @@ async fn require_auth(
         "invalid or missing local API token",
     );
     Err(ApiError::unauthorized("invalid or missing local API token"))
+}
+
+fn extract_query_token(query: Option<&str>) -> Option<&str> {
+    let query = query?;
+
+    query.split('&').find_map(|pair| {
+        let mut parts = pair.splitn(2, '=');
+        let key = parts.next()?;
+        let value = parts.next()?;
+        (key == "token" && !value.is_empty()).then_some(value)
+    })
 }
 
 async fn cors_middleware(

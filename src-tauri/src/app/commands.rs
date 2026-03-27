@@ -57,6 +57,13 @@ pub fn get_bootstrap_state(
 }
 
 #[tauri::command]
+pub fn get_realtime_socket_url(
+    state: tauri::State<'_, std::sync::Arc<AppState>>,
+) -> String {
+    state.realtime_socket_url()
+}
+
+#[tauri::command]
 pub fn refresh_printers(
     state: tauri::State<'_, std::sync::Arc<AppState>>,
 ) -> Result<BootstrapPayload, String> {

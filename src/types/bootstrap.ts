@@ -160,3 +160,18 @@ export interface BootstrapPayload {
   printing: PrintingOverview;
   printers: ResolvedPrinter[];
 }
+
+export type RealtimeEventName =
+  | "snapshot"
+  | "printers.changed"
+  | "printer.connected"
+  | "printer.disconnected"
+  | "bridge.connected"
+  | "bridge.forgotten"
+  | "bridge.pairing"
+  | "config.updated";
+
+export interface BridgeRealtimeEvent {
+  event: RealtimeEventName;
+  payload: BootstrapPayload;
+}

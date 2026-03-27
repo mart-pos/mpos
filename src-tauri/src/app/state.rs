@@ -5,6 +5,7 @@ use std::{
 };
 
 use tauri::{AppHandle, Manager};
+use tokio::sync::broadcast;
 
 use crate::{
     api::server::ApiServerConfig,
@@ -94,6 +95,14 @@ pub struct AppState {
     printing: PrintingOverview,
     runtime: RwLock<RuntimeState>,
     rate_limit: Mutex<HashMap<String, RateBucket>>,
+    events: broadcast::Sender<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RealtimeEvent<'a> {
+    event: &'a str,
+    payload: &'a BootstrapPayload,
 }
 
 #[derive(Clone, serde::Deserialize)]
@@ -197,6 +206,8 @@ impl AppState {
             })
             .map_err(|error| format!("failed to persist initialized state: {error}"))?;
 
+        let (events, _) = broadcast::channel(64);
+
         Ok(Self {
             app_name: "MPOS Core".into(),
             app_version: env!("CARGO_PKG_VERSION").into(),
@@ -217,6 +228,7 @@ impl AppState {
                 pairing: PairingState::default(),
             }),
             rate_limit: Mutex::new(HashMap::new()),
+            events,
         })
     }
 
@@ -275,17 +287,13 @@ impl AppState {
         runtime.last_refresh_error = None;
         drop(runtime);
 
-        let state = Arc::clone(self);
-        tauri::async_runtime::spawn(async move {
-            let printers = state.discovery_service.discover_printers();
-            let _ = state.complete_refresh(printers);
-        });
-
-        Ok(self.snapshot())
+        let printers = self.discovery_service.discover_printers();
+        self.complete_refresh(printers)
     }
 
     fn complete_refresh(&self, printers: Vec<ResolvedPrinter>) -> Result<BootstrapPayload, String> {
         let mut runtime = self.runtime.write().expect("runtime lock poisoned");
+        let previous_printers = runtime.printers.clone();
 
         runtime.printers = hydrated_printers(
             printers,
@@ -311,7 +319,7 @@ impl AppState {
             &runtime.printer_overrides,
         )?;
 
-        Ok(BootstrapPayload {
+        let payload = BootstrapPayload {
             app_name: self.app_name.clone(),
             app_version: self.app_version.clone(),
             config: runtime.config.clone(),
@@ -322,7 +330,10 @@ impl AppState {
             storage: self.storage_overview.clone(),
             printing: self.printing.clone(),
             printers: runtime.printers.clone(),
-        })
+        };
+        drop(runtime);
+        emit_printer_status_events(self, &previous_printers, &payload.printers, &payload);
+        Ok(payload)
     }
 
     pub fn printers(&self) -> Vec<ResolvedPrinter> {
@@ -360,6 +371,8 @@ impl AppState {
             &runtime.bridge,
             &runtime.printer_overrides,
         )?;
+        drop(runtime);
+        self.emit_snapshot_event("printers.changed");
 
         Ok(selected)
     }
@@ -420,10 +433,14 @@ impl AppState {
             &runtime.bridge,
             &runtime.printer_overrides,
         )?;
+        let config = runtime.config.clone();
+        let restart_required = runtime.config.api_port != current_port;
+        drop(runtime);
+        self.emit_snapshot_event("config.updated");
 
         Ok(ConfigUpdateResult {
-            config: runtime.config.clone(),
-            restart_required: runtime.config.api_port != current_port,
+            config,
+            restart_required,
         })
     }
 
@@ -517,13 +534,15 @@ impl AppState {
             &runtime.bridge,
             &runtime.printer_overrides,
         )?;
-
-        runtime
+        let updated_printer = runtime
             .printers
             .iter()
             .find(|printer| printer.id == printer_id)
             .cloned()
-            .ok_or_else(|| format!("printer not found after update: {printer_id}"))
+            .ok_or_else(|| format!("printer not found after update: {printer_id}"))?;
+        drop(runtime);
+        self.emit_snapshot_event("printers.changed");
+        Ok(updated_printer)
     }
 
     pub fn api_server_config(&self) -> ApiServerConfig {
@@ -637,10 +656,13 @@ impl AppState {
             code: Some(generate_pairing_code()),
             expires_at_unix: Some(now + 10 * 60),
         };
-        Ok(pairing_snapshot(
+        let snapshot = pairing_snapshot(
             &runtime.pairing,
             runtime.config.allowed_origin.clone(),
-        ))
+        );
+        drop(runtime);
+        self.emit_snapshot_event("bridge.pairing");
+        Ok(snapshot)
     }
 
     pub fn pairing_status(&self) -> PairingSnapshot {
@@ -659,16 +681,8 @@ impl AppState {
 
     pub fn regenerate_api_token(&self) -> Result<BootstrapPayload, String> {
         let mut runtime = self.runtime.write().expect("runtime lock poisoned");
-        runtime.auth.regenerate_token();
-        runtime.pairing = PairingState::default();
-        runtime.bridge = BridgeState::default();
-        self.persist_runtime(
-            &runtime.config,
-            &runtime.auth,
-            &runtime.bridge,
-            &runtime.printer_overrides,
-        )?;
-        Ok(BootstrapPayload {
+        self.reset_bridge_runtime(&mut runtime)?;
+        let payload = BootstrapPayload {
             app_name: self.app_name.clone(),
             app_version: self.app_version.clone(),
             config: runtime.config.clone(),
@@ -679,7 +693,10 @@ impl AppState {
             storage: self.storage_overview.clone(),
             printing: self.printing.clone(),
             printers: runtime.printers.clone(),
-        })
+        };
+        drop(runtime);
+        self.emit_payload_event("bridge.forgotten", &payload);
+        Ok(payload)
     }
 
     pub fn exchange_pairing_code(
@@ -721,13 +738,25 @@ impl AppState {
             &runtime.bridge,
             &runtime.printer_overrides,
         )?;
+        let token = runtime.auth.token.clone();
+        let token_header = runtime.auth.token_header.clone();
+        drop(runtime);
+        self.emit_snapshot_event("bridge.connected");
 
         Ok(PairingExchangeResult {
-            token: runtime.auth.token.clone(),
-            token_header: runtime.auth.token_header.clone(),
+            token,
+            token_header,
             allowed_origin,
             origin_allowed,
         })
+    }
+
+    pub fn forget_bridge(&self) -> Result<(), String> {
+        let mut runtime = self.runtime.write().expect("runtime lock poisoned");
+        self.reset_bridge_runtime(&mut runtime)?;
+        drop(runtime);
+        self.emit_snapshot_event("bridge.forgotten");
+        Ok(())
     }
 
     pub fn martpos_pairing_url(&self) -> String {
@@ -745,6 +774,20 @@ impl AppState {
         format!(
             "{base}/{lang}/settings/printers?bridge_pair=1&bridge_url={}",
             url_encode(&bridge_url)
+        )
+    }
+
+    pub fn realtime_socket_url(&self) -> String {
+        let runtime = self.runtime.read().expect("runtime lock poisoned");
+        let base_url = runtime
+            .api_server
+            .base_url
+            .replace("http://", "ws://")
+            .replace("https://", "wss://");
+
+        format!(
+            "{base_url}/api/v1/events?token={}",
+            url_encode(&runtime.auth.token)
         )
     }
 
@@ -768,6 +811,38 @@ impl AppState {
                     self.storage_repository.config_path().display()
                 )
             })
+    }
+
+    fn reset_bridge_runtime(&self, runtime: &mut RuntimeState) -> Result<(), String> {
+        runtime.auth.regenerate_token();
+        runtime.pairing = PairingState::default();
+        runtime.bridge = BridgeState::default();
+        self.persist_runtime(
+            &runtime.config,
+            &runtime.auth,
+            &runtime.bridge,
+            &runtime.printer_overrides,
+        )
+    }
+
+    pub fn subscribe_events(&self) -> broadcast::Receiver<String> {
+        self.events.subscribe()
+    }
+
+    pub fn current_event_payload(&self, event: &str) -> Result<String, String> {
+        let payload = self.snapshot();
+        serialize_event(event, &payload)
+    }
+
+    fn emit_snapshot_event(&self, event: &str) {
+        let payload = self.snapshot();
+        self.emit_payload_event(event, &payload);
+    }
+
+    fn emit_payload_event(&self, event: &str, payload: &BootstrapPayload) {
+        if let Ok(message) = serialize_event(event, payload) {
+            let _ = self.events.send(message);
+        }
     }
 
     fn select_printer(&self, printer_id: Option<String>) -> Result<ResolvedPrinter, String> {
@@ -845,13 +920,7 @@ fn determine_default_printer_id(
     auto_default: bool,
 ) -> Option<String> {
     if let Some(default_id) = persisted_default {
-        let still_available = printers.iter().any(|printer| {
-            printer.id == default_id && printer.status == ResolvedPrinterStatus::Online
-        });
-
-        if still_available {
-            return Some(default_id);
-        }
+        return Some(default_id);
     }
 
     if !auto_default {
@@ -890,6 +959,9 @@ fn select_default_printer(printers: &[ResolvedPrinter]) -> Option<String> {
                 .iter()
                 .find(|printer| printer.status == ResolvedPrinterStatus::Online)
         })
+        .or_else(|| printers.iter().find(|printer| printer.kind == PrinterKind::Thermal))
+        .or_else(|| printers.iter().find(|printer| printer.receipt_capable))
+        .or_else(|| printers.first())
         .map(|printer| printer.id.clone())
 }
 
@@ -1098,6 +1170,47 @@ fn bridge_snapshot(bridge: &BridgeState) -> BridgeSnapshot {
         last_seen_at: bridge.last_seen_at_unix.map(|value| format!("unix:{value}")),
         last_origin: bridge.last_origin.clone(),
     }
+}
+
+fn serialize_event(event: &str, payload: &BootstrapPayload) -> Result<String, String> {
+    serde_json::to_string(&RealtimeEvent { event, payload })
+        .map_err(|error| format!("failed to serialize realtime event: {error}"))
+}
+
+fn emit_printer_status_events(
+    state: &AppState,
+    previous: &[ResolvedPrinter],
+    current: &[ResolvedPrinter],
+    payload: &BootstrapPayload,
+) {
+    if !printers_changed(previous, current) {
+        return;
+    }
+
+    state.emit_payload_event("printers.changed", payload);
+
+    for printer in current {
+        let previous_status = previous
+            .iter()
+            .find(|entry| entry.id == printer.id)
+            .map(|entry| entry.status);
+
+        if previous_status != Some(ResolvedPrinterStatus::Online)
+            && printer.status == ResolvedPrinterStatus::Online
+        {
+            state.emit_payload_event("printer.connected", payload);
+        }
+
+        if previous_status == Some(ResolvedPrinterStatus::Online)
+            && printer.status != ResolvedPrinterStatus::Online
+        {
+            state.emit_payload_event("printer.disconnected", payload);
+        }
+    }
+}
+
+fn printers_changed(previous: &[ResolvedPrinter], current: &[ResolvedPrinter]) -> bool {
+    serde_json::to_string(previous).ok() != serde_json::to_string(current).ok()
 }
 
 fn unix_now() -> u64 {

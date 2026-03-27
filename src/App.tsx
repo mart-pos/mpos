@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   AlertCircleIcon,
@@ -53,9 +53,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { toast } from "sonner";
+import { connectBridgeEvents } from "./lib/martpos-bridge-sdk";
 import { fallbackBootstrap } from "./mocks/bootstrap";
 import type {
   BootstrapPayload,
+  BridgeRealtimeEvent,
   PaperWidth,
   PrinterType,
   ResolvedPrinter,
@@ -145,10 +147,10 @@ function statusTone(status: ResolvedPrinter["status"]) {
 
 function statusText(status: ResolvedPrinter["status"]) {
   if (status === "online") {
-    return "Lista";
+    return "Conectada";
   }
   if (status === "offline") {
-    return "Revisar";
+    return "Desconectada";
   }
   return "Sin confirmar";
 }
@@ -285,6 +287,7 @@ function App() {
   const [data, setData] = useState<BootstrapPayload>(fallbackBootstrap);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+  const [socketConnected, setSocketConnected] = useState(false);
   const [refreshCooldownSeconds, setRefreshCooldownSeconds] = useState(0);
   const [printCooldownActive, setPrintCooldownActive] = useState(false);
   const refreshInFlightRef = useRef(false);
@@ -383,6 +386,101 @@ function App() {
       window.clearInterval(interval);
     };
   }, [data.pairing.active, pairingLiveMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let reconnectTimer: number | null = null;
+    let socket: WebSocket | null = null;
+
+    const connect = async () => {
+      try {
+        const url = await invoke<string>("get_realtime_socket_url");
+        if (cancelled) {
+          return;
+        }
+
+        socket = connectBridgeEvents(url, {
+          onOpen: () => {
+            if (!cancelled) {
+              setSocketConnected(true);
+            }
+          },
+          onClose: () => {
+            if (!cancelled) {
+              setSocketConnected(false);
+              reconnectTimer = window.setTimeout(() => {
+                void connect();
+              }, 2000);
+            }
+          },
+          onError: () => {
+            if (!cancelled) {
+              setSocketConnected(false);
+            }
+          },
+          onEvent: (event: BridgeRealtimeEvent) => {
+            if (cancelled) {
+              return;
+            }
+
+            syncBootstrap(event.payload);
+
+            if (event.event === "bridge.connected") {
+              setMartposIssue(null);
+              setPairingLiveMode(false);
+            }
+          },
+        });
+      } catch {
+        if (!cancelled) {
+          setSocketConnected(false);
+        }
+      }
+    };
+
+    void connect();
+
+    return () => {
+      cancelled = true;
+      setSocketConnected(false);
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+      }
+      socket?.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (settingsOpen || profileDialogPrinterId) {
+      return;
+    }
+
+    let cancelled = false;
+    const sync = async () => {
+      if (refreshInFlightRef.current || loading || socketConnected) {
+        return;
+      }
+
+      try {
+        const payload = await invoke<BootstrapPayload>("get_bootstrap_state");
+
+        if (!cancelled) {
+          syncBootstrap(payload);
+        }
+      } catch {
+        // Silent on purpose. This runs in the background only to keep the UI fresh.
+      }
+    };
+
+    const interval = window.setInterval(() => {
+      void sync();
+    }, 4000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [loading, profileDialogPrinterId, settingsOpen, socketConnected]);
 
   useEffect(() => {
     if (!message) {
@@ -729,6 +827,41 @@ function App() {
   const firstReadyPrinter = data.printers.find(
     (printer) => printer.status === "online" && printer.receiptCapable,
   );
+  const diagnosisItems = [
+    !data.bridge.connected
+      ? {
+          title: "MartPOS todavia no esta vinculado",
+          detail: "Abre MartPOS desde aqui y termina la vinculacion en este equipo.",
+          action: (
+            <Button type="button" variant="outline" onClick={handleLaunchMartposPairing}>
+              Abrir MartPOS
+            </Button>
+          ),
+        }
+      : null,
+    data.printers.length === 0
+      ? {
+          title: "No encontramos impresoras",
+          detail: "Conecta la impresora y usa refrescar para volver a buscarla.",
+          action: (
+            <Button type="button" variant="outline" onClick={refreshPrinters} disabled={loading || refreshCooldownSeconds > 0}>
+              Refrescar
+            </Button>
+          ),
+        }
+      : null,
+    data.printers.length > 0 && readyPrinters === 0
+      ? {
+          title: "Hay impresoras detectadas pero no listas para recibos",
+          detail: "Revisa la impresora principal o ajusta el perfil para recibos.",
+          action: firstReadyPrinter ? null : (
+            <Button type="button" variant="outline" onClick={() => openProfileDialog(data.printers[0])}>
+              Revisar impresora
+            </Button>
+          ),
+        }
+      : null,
+  ].filter(Boolean) as Array<{ title: string; detail: string; action: ReactNode | null }>;
   const setupSteps = [
     {
       label: "Vincular MartPOS",
@@ -1047,7 +1180,9 @@ function App() {
             </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            {data.printers.length > 0 && !defaultPrinter ? (
+            {data.printers.length > 0 &&
+            !defaultPrinter &&
+            !data.config.defaultPrinterId ? (
               <div className="flex items-start justify-between gap-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3">
                 <div>
                   <Text weight="medium">Falta una impresora principal</Text>
@@ -1253,41 +1388,90 @@ function App() {
             <div className="flex items-center gap-3">
               <LifeBuoyIcon className="size-4 text-muted-foreground" />
               <div>
-                <Text weight="medium">Diagnostico y soporte</Text>
+                <Text weight="medium">Diagnostico guiado</Text>
                 <Text variant="caption">
-                  Solo abre esto si necesitas revisar conexion o impresoras.
+                  Abre esto si algo no conecta, no aparece o no imprime.
                 </Text>
               </div>
             </div>
             <Text variant="caption">Abrir</Text>
           </summary>
-          <div className="grid gap-3 border-t border-border px-5 py-4 text-sm md:grid-cols-2">
+          <div className="flex flex-col gap-4 border-t border-border px-5 py-4 text-sm">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <Text variant="caption">Socket en vivo</Text>
+                <Text className="mt-1">
+                  {socketConnected ? "Conectado" : "Reconectando"}
+                </Text>
+              </div>
+              <div>
+                <Text variant="caption">Estado MartPOS</Text>
+                <Text className="mt-1">
+                  {data.bridge.connected
+                    ? "Vinculado"
+                    : "Pendiente de vinculacion"}
+                </Text>
+              </div>
+              <div>
+                <Text variant="caption">Origen permitido</Text>
+                <Text className="mt-1">
+                  {data.config.allowedOrigin ?? "Sin definir"}
+                </Text>
+              </div>
+              <div>
+                <Text variant="caption">Impresora principal</Text>
+                <Text className="mt-1">
+                  {defaultPrinter?.name ?? "Sin definir"}
+                </Text>
+              </div>
+              <div>
+                <Text variant="caption">Impresoras listas</Text>
+                <Text className="mt-1">
+                  {readyPrinters} de {onlinePrinters.length} en linea
+                </Text>
+              </div>
+            </div>
+
+            {diagnosisItems.length > 0 ? (
+              <div className="flex flex-col gap-3">
+                {diagnosisItems.map((item) => (
+                  <div
+                    key={item.title}
+                    className="flex items-start justify-between gap-3 rounded-lg border border-border/70 px-4 py-3"
+                  >
+                    <div>
+                      <Text weight="medium">{item.title}</Text>
+                      <Text variant="caption" className="mt-1">
+                        {item.detail}
+                      </Text>
+                    </div>
+                    {item.action}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-3">
+                <Text weight="medium">Todo se ve bien</Text>
+                <Text variant="caption" className="mt-1">
+                  MartPOS, impresoras y bridge local parecen estar listos.
+                </Text>
+              </div>
+            )}
+
+            <div className="grid gap-3 md:grid-cols-2">
             <div>
-              <Text variant="caption">Estado MartPOS</Text>
+              <Text variant="caption">Que hacer si no imprime</Text>
               <Text className="mt-1">
-                {data.bridge.connected
-                  ? "Vinculado"
-                  : "Pendiente de vinculacion"}
+                Revisa la principal, imprime una prueba y ajusta el perfil si hace falta.
               </Text>
             </div>
             <div>
-              <Text variant="caption">Origen permitido</Text>
+              <Text variant="caption">Que hacer si no aparece</Text>
               <Text className="mt-1">
-                {data.config.allowedOrigin ?? "Sin definir"}
+                Conecta la impresora, espera unos segundos y verifica si el estado cambia solo.
               </Text>
             </div>
-            <div>
-              <Text variant="caption">Impresora principal</Text>
-              <Text className="mt-1">
-                {defaultPrinter?.name ?? "Sin definir"}
-              </Text>
-            </div>
-            <div>
-              <Text variant="caption">Impresoras listas</Text>
-              <Text className="mt-1">
-                {readyPrinters} de {onlinePrinters.length} en linea
-              </Text>
-            </div>
+          </div>
           </div>
         </details>
       </div>
