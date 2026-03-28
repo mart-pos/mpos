@@ -1,5 +1,25 @@
 #![allow(dead_code)]
 
+pub const IS_DEV: bool = cfg!(debug_assertions);
+pub const LOCAL_ALLOWED_ORIGIN: &str = "http://localhost:3000";
+pub const PRODUCTION_ALLOWED_ORIGIN: &str = "https://martpos.app";
+
+pub fn active_allowed_origin() -> &'static str {
+    if IS_DEV {
+        LOCAL_ALLOWED_ORIGIN
+    } else {
+        PRODUCTION_ALLOWED_ORIGIN
+    }
+}
+
+pub fn active_martpos_label() -> &'static str {
+    if IS_DEV {
+        "MartPOS Local"
+    } else {
+        "MartPOS"
+    }
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)]
@@ -29,14 +49,14 @@ impl Default for AppConfig {
             fallback_policy: "prefer_system_spooler".into(),
             log_level: LogLevel::Info,
             allow_raw_printing: false,
-            allowed_origin: Some("https://martpos.app".into()),
+            allowed_origin: default_allowed_origin(),
             default_printer_id: None,
         }
     }
 }
 
 fn default_allowed_origin() -> Option<String> {
-    Some("https://martpos.app".into())
+    Some(active_allowed_origin().into())
 }
 
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]

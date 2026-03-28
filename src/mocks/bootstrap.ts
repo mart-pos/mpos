@@ -1,5 +1,10 @@
 import type { BootstrapPayload } from "../types/bootstrap";
 
+const IS_DEV = import.meta.env.DEV;
+const ACTIVE_ALLOWED_ORIGIN = IS_DEV
+  ? "http://localhost:3000"
+  : "https://martpos.app";
+
 export const fallbackBootstrap: BootstrapPayload = {
   appName: "MPOS Core",
   appVersion: "0.1.0",
@@ -12,7 +17,7 @@ export const fallbackBootstrap: BootstrapPayload = {
     fallbackPolicy: "prefer_system_spooler",
     logLevel: "info",
     allowRawPrinting: false,
-    allowedOrigin: "https://martpos.app",
+    allowedOrigin: ACTIVE_ALLOWED_ORIGIN,
     defaultPrinterId: "printer_01",
   },
   apiServer: {
@@ -33,13 +38,15 @@ export const fallbackBootstrap: BootstrapPayload = {
     connected: true,
     pairedAt: "unix:1774475400",
     lastSeenAt: "unix:1774479000",
-    lastOrigin: "https://martpos.app",
+    lastOrigin: ACTIVE_ALLOWED_ORIGIN,
+    clientBrowser: "Chrome",
+    clientMachine: "MacBook Pro",
   },
   pairing: {
     active: false,
     code: null,
     expiresAt: null,
-    allowedOrigin: "https://martpos.app",
+    allowedOrigin: ACTIVE_ALLOWED_ORIGIN,
   },
   storage: {
     driver: "json",

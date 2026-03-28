@@ -9,7 +9,10 @@ use tokio::sync::broadcast;
 
 use crate::{
     api::server::ApiServerConfig,
-    config::model::{AppConfig, LogLevel, ThemeMode},
+    config::model::{
+        active_allowed_origin, AppConfig, LogLevel, ThemeMode, LOCAL_ALLOWED_ORIGIN,
+        PRODUCTION_ALLOWED_ORIGIN,
+    },
     discovery::service::DiscoveryService,
     domain::printer::{
         PaperWidthMm, PrinterKind, PrinterOverride, PrinterProfile, ResolvedPrinter,
@@ -60,6 +63,8 @@ struct BridgeState {
     paired_at_unix: Option<u64>,
     last_seen_at_unix: Option<u64>,
     last_origin: Option<String>,
+    client_browser: Option<String>,
+    client_machine: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -69,6 +74,8 @@ pub struct BridgeSnapshot {
     pub paired_at: Option<String>,
     pub last_seen_at: Option<String>,
     pub last_origin: Option<String>,
+    pub client_browser: Option<String>,
+    pub client_machine: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -133,6 +140,8 @@ pub struct PairingExchangeResult {
     pub token_header: String,
     pub allowed_origin: Option<String>,
     pub origin_allowed: bool,
+    pub client_browser: Option<String>,
+    pub client_machine: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -195,6 +204,9 @@ impl AppState {
         );
 
         let mut config = persisted.config.clone();
+        config.allowed_origin = Some(resolve_effective_allowed_origin(
+            config.allowed_origin.as_deref(),
+        ));
         config.default_printer_id = default_printer_id;
 
         storage_repository
@@ -414,7 +426,8 @@ impl AppState {
             runtime.config.allow_raw_printing = allow_raw_printing;
         }
         if let Some(allowed_origin) = patch.allowed_origin {
-            runtime.config.allowed_origin = allowed_origin;
+            runtime.config.allowed_origin =
+                Some(resolve_effective_allowed_origin(allowed_origin.as_deref()));
         }
 
         runtime.config.default_printer_id = determine_default_printer_id(
@@ -703,6 +716,8 @@ impl AppState {
         &self,
         code: &str,
         origin: Option<&str>,
+        client_browser: Option<&str>,
+        client_machine: Option<&str>,
     ) -> Result<PairingExchangeResult, String> {
         let mut runtime = self.runtime.write().expect("runtime lock poisoned");
         let now = unix_now();
@@ -730,6 +745,14 @@ impl AppState {
         runtime.bridge.paired_at_unix = Some(now);
         runtime.bridge.last_seen_at_unix = Some(now);
         runtime.bridge.last_origin = origin.map(ToString::to_string);
+        runtime.bridge.client_browser = client_browser
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        runtime.bridge.client_machine = client_machine
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
 
         runtime.pairing = PairingState::default();
         self.persist_runtime(
@@ -740,6 +763,8 @@ impl AppState {
         )?;
         let token = runtime.auth.token.clone();
         let token_header = runtime.auth.token_header.clone();
+        let client_browser = runtime.bridge.client_browser.clone();
+        let client_machine = runtime.bridge.client_machine.clone();
         drop(runtime);
         self.emit_snapshot_event("bridge.connected");
 
@@ -748,6 +773,8 @@ impl AppState {
             token_header,
             allowed_origin,
             origin_allowed,
+            client_browser,
+            client_machine,
         })
     }
 
@@ -885,6 +912,8 @@ impl BridgeState {
             paired_at_unix: record.paired_at_unix,
             last_seen_at_unix: record.last_seen_at_unix,
             last_origin: record.last_origin.clone(),
+            client_browser: record.client_browser.clone(),
+            client_machine: record.client_machine.clone(),
         }
     }
 
@@ -893,6 +922,8 @@ impl BridgeState {
             paired_at_unix: self.paired_at_unix,
             last_seen_at_unix: self.last_seen_at_unix,
             last_origin: self.last_origin.clone(),
+            client_browser: self.client_browser.clone(),
+            client_machine: self.client_machine.clone(),
         }
     }
 }
@@ -1169,6 +1200,8 @@ fn bridge_snapshot(bridge: &BridgeState) -> BridgeSnapshot {
         paired_at: bridge.paired_at_unix.map(|value| format!("unix:{value}")),
         last_seen_at: bridge.last_seen_at_unix.map(|value| format!("unix:{value}")),
         last_origin: bridge.last_origin.clone(),
+        client_browser: bridge.client_browser.clone(),
+        client_machine: bridge.client_machine.clone(),
     }
 }
 
@@ -1240,27 +1273,24 @@ fn resolve_martpos_base_url(configured_origin: Option<&str>) -> String {
 }
 
 fn is_origin_allowed(configured_origin: Option<&str>, actual_origin: Option<&str>) -> bool {
-    match (configured_origin, actual_origin) {
-        (Some(allowed), Some(actual)) if allowed == actual => true,
-        (Some("https://martpos.app"), Some("http://localhost:3000")) if cfg!(debug_assertions) => {
-            true
-        }
-        (Some(_), Some(_)) => false,
-        (Some(_), None) => false,
-        (None, _) => true,
+    let allowed = resolve_effective_allowed_origin(configured_origin);
+
+    match actual_origin {
+        Some(actual) if actual == allowed => true,
+        Some(_) => false,
+        None => false,
     }
 }
 
 fn resolve_effective_allowed_origin(configured_origin: Option<&str>) -> String {
-    if cfg!(debug_assertions)
-        && configured_origin.is_none_or(|origin| origin == "https://martpos.app")
-    {
-        return "http://localhost:3000".into();
+    match configured_origin {
+        None => active_allowed_origin().into(),
+        Some(origin) if origin.trim().is_empty() => active_allowed_origin().into(),
+        Some(LOCAL_ALLOWED_ORIGIN | PRODUCTION_ALLOWED_ORIGIN) => {
+            active_allowed_origin().into()
+        }
+        Some(origin) => origin.to_string(),
     }
-
-    configured_origin
-        .unwrap_or("https://martpos.app")
-        .to_string()
 }
 
 #[cfg(test)]

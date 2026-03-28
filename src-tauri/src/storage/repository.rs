@@ -46,6 +46,8 @@ pub struct PersistedBridgeState {
     pub paired_at_unix: Option<u64>,
     pub last_seen_at_unix: Option<u64>,
     pub last_origin: Option<String>,
+    pub client_browser: Option<String>,
+    pub client_machine: Option<String>,
 }
 
 #[derive(Clone)]

@@ -19,7 +19,7 @@ function PageTitle({ asChild, className, ...props }: HeadingProps) {
   return <Comp className={cn(pageTitleStyles, className)} {...props} />;
 }
 
-const sectionTitleStyles = cn("text-base font-semibold tracking-tight leading-6");
+const sectionTitleStyles = cn("text-base font-medium tracking-tight leading-6");
 
 function SectionTitle({ asChild, className, ...props }: HeadingProps) {
   const Comp = asChild ? Slot.Root : ("h2" as const);
@@ -58,13 +58,7 @@ type TextProps = React.HTMLAttributes<HTMLElement> &
     asChild?: boolean;
   };
 
-function Text({
-  asChild,
-  className,
-  variant,
-  weight,
-  ...props
-}: TextProps) {
+function Text({ asChild, className, variant, weight, ...props }: TextProps) {
   const Comp = asChild ? Slot.Root : ("p" as const);
   return (
     <Comp

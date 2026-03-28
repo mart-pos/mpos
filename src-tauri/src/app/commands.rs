@@ -47,6 +47,8 @@ pub struct UpdatePrinterOverridePayload {
 pub struct PairingExchangePayload {
     pub code: String,
     pub origin: Option<String>,
+    pub client_browser: Option<String>,
+    pub client_machine: Option<String>,
 }
 
 #[tauri::command]
@@ -162,7 +164,12 @@ pub fn exchange_pairing_code(
     state: tauri::State<'_, std::sync::Arc<AppState>>,
     payload: PairingExchangePayload,
 ) -> Result<PairingExchangeResult, String> {
-    state.exchange_pairing_code(&payload.code, payload.origin.as_deref())
+    state.exchange_pairing_code(
+        &payload.code,
+        payload.origin.as_deref(),
+        payload.client_browser.as_deref(),
+        payload.client_machine.as_deref(),
+    )
 }
 
 #[tauri::command]

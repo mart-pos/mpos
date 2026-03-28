@@ -38,6 +38,8 @@ export interface BridgeState {
   pairedAt: string | null;
   lastSeenAt: string | null;
   lastOrigin: string | null;
+  clientBrowser: string | null;
+  clientMachine: string | null;
 }
 
 export interface PairingState {

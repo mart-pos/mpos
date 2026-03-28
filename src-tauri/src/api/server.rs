@@ -98,6 +98,8 @@ pub struct UpdatePrinterRequest {
 pub struct PairingExchangeRequest {
     pub code: String,
     pub origin: Option<String>,
+    pub client_browser: Option<String>,
+    pub client_machine: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -212,7 +214,12 @@ async fn post_pairing_exchange(
         .map_err(ApiError::too_many_requests)?;
 
     state
-        .exchange_pairing_code(&payload.code, request_origin.as_deref())
+        .exchange_pairing_code(
+            &payload.code,
+            request_origin.as_deref(),
+            payload.client_browser.as_deref(),
+            payload.client_machine.as_deref(),
+        )
         .map(Json)
         .map_err(ApiError::bad_request)
 }
@@ -454,10 +461,6 @@ fn resolve_cors_origin(state: &SharedAppState, request_origin: Option<&str>) -> 
     let configured = state.allow_origin();
 
     if configured.as_deref() == Some(request_origin) {
-        return Some(request_origin.to_string());
-    }
-
-    if cfg!(debug_assertions) && request_origin == "http://localhost:3000" {
         return Some(request_origin.to_string());
     }
 

@@ -5,6 +5,7 @@ use std::{
 };
 
 use crate::{
+    config::model::{active_allowed_origin, active_martpos_label},
     domain::{
         printer::{PaperWidthMm, PrinterKind, ResolvedPrinter},
         receipt::{ReceiptBlock, ReceiptDocument},
@@ -53,6 +54,8 @@ pub fn build_test_receipt(width: PaperWidthMm) -> ReceiptDocument {
         PaperWidthMm::Mm58 => 58,
         PaperWidthMm::Mm80 | PaperWidthMm::Unknown => 80,
     };
+    let martpos_flow_label = format!("{} -> MPOS Core -> impresora", active_martpos_label());
+    let martpos_receipt_url = format!("{}/receipt/A-10428", active_allowed_origin());
 
     ReceiptDocument {
         paper_width_mm,
@@ -135,13 +138,13 @@ pub fn build_test_receipt(width: PaperWidthMm) -> ReceiptDocument {
                 bold: true,
             },
             ReceiptBlock::Text {
-                value: "martpos.app -> MPOS Core -> impresora".into(),
+                value: martpos_flow_label,
                 align: "left".into(),
                 bold: false,
             },
             ReceiptBlock::Divider,
             ReceiptBlock::Qr {
-                value: "https://martpos.app/receipt/A-10428".into(),
+                value: martpos_receipt_url,
             },
             ReceiptBlock::Barcode {
                 value: "A1042819050".into(),
