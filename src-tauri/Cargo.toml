@@ -27,3 +27,5 @@ axum = { version = "0.7", features = ["json", "ws"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync"] }
 rand = "0.8"
 rusb = "0.9"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp"] }

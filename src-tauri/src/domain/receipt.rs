@@ -12,25 +12,37 @@ pub struct ReceiptDocument {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ReceiptBlock {
     Text { value: String, align: String, bold: bool },
+    Image {
+        data: String,
+        align: Option<String>,
+        #[serde(alias = "maxWidth")]
+        max_width: Option<u16>,
+    },
     Divider,
     Item {
         name: String,
         qty: u32,
         #[serde(alias = "unitPrice")]
-        unit_price: u64,
-        total: u64,
+        unit_price: ReceiptAmount,
+        total: ReceiptAmount,
     },
     Totals {
-        subtotal: u64,
-        tax: u64,
+        subtotal: ReceiptAmount,
+        tax: ReceiptAmount,
         #[serde(alias = "grandTotal")]
-        grand_total: u64,
+        grand_total: ReceiptAmount,
     },
     Qr { value: String },
     Barcode {
         value: String,
         symbology: Option<String>,
         height: Option<u8>,
+        #[serde(default = "default_true")]
+        #[serde(alias = "showText")]
+        show_text: bool,
+        #[serde(default)]
+        #[serde(alias = "fullWidth")]
+        full_width: bool,
     },
     CashDrawer,
     Cut,
@@ -58,6 +70,23 @@ impl ReceiptDocument {
                         return Err("text align must be left, center or right".into());
                     }
                 }
+                ReceiptBlock::Image {
+                    data,
+                    align,
+                    max_width,
+                } => {
+                    validate_text(data, 256_000, "image data")?;
+                    if let Some(align) = align {
+                        if !matches!(align.as_str(), "left" | "center" | "right") {
+                            return Err("image align must be left, center or right".into());
+                        }
+                    }
+                    if let Some(max_width) = max_width {
+                        if *max_width == 0 {
+                            return Err("image max_width must be greater than zero".into());
+                        }
+                    }
+                }
                 ReceiptBlock::Divider | ReceiptBlock::CashDrawer | ReceiptBlock::Cut => {}
                 ReceiptBlock::Item {
                     name,
@@ -69,8 +98,14 @@ impl ReceiptDocument {
                     if *qty == 0 {
                         return Err("item qty must be greater than zero".into());
                     }
-                    if *total < *unit_price {
-                        return Err("item total cannot be lower than unit_price".into());
+                    unit_price.validate("item unit_price")?;
+                    total.validate("item total")?;
+                    if let (Some(total), Some(unit_price)) =
+                        (total.as_numeric(), unit_price.as_numeric())
+                    {
+                        if total < unit_price {
+                            return Err("item total cannot be lower than unit_price".into());
+                        }
                     }
                 }
                 ReceiptBlock::Totals {
@@ -78,8 +113,17 @@ impl ReceiptDocument {
                     tax,
                     grand_total,
                 } => {
-                    if subtotal.saturating_add(*tax) > *grand_total {
-                        return Err("grand_total cannot be lower than subtotal + tax".into());
+                    subtotal.validate("subtotal")?;
+                    tax.validate("tax")?;
+                    grand_total.validate("grand_total")?;
+                    if let (Some(subtotal), Some(tax), Some(grand_total)) = (
+                        subtotal.as_numeric(),
+                        tax.as_numeric(),
+                        grand_total.as_numeric(),
+                    ) {
+                        if subtotal.saturating_add(tax) > grand_total {
+                            return Err("grand_total cannot be lower than subtotal + tax".into());
+                        }
                     }
                 }
                 ReceiptBlock::Qr { value } => {
@@ -89,6 +133,7 @@ impl ReceiptDocument {
                     value,
                     symbology,
                     height,
+                    ..
                 } => {
                     validate_text(value, 128, "barcode value")?;
                     if let Some(symbology) = symbology {
@@ -110,6 +155,40 @@ impl ReceiptDocument {
 
         Ok(())
     }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum ReceiptAmount {
+    Number(u64),
+    Text(String),
+}
+
+impl ReceiptAmount {
+    pub fn as_numeric(&self) -> Option<u64> {
+        match self {
+            Self::Number(value) => Some(*value),
+            Self::Text(_) => None,
+        }
+    }
+
+    pub fn as_display(&self) -> String {
+        match self {
+            Self::Number(value) => value.to_string(),
+            Self::Text(value) => value.clone(),
+        }
+    }
+
+    pub fn validate(&self, label: &str) -> Result<(), String> {
+        match self {
+            Self::Number(_) => Ok(()),
+            Self::Text(value) => validate_text(value, 64, label),
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn validate_text(value: &str, max_len: usize, label: &str) -> Result<(), String> {

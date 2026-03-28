@@ -67,6 +67,10 @@ export function OTPInput({
           }}
           type="text"
           inputMode="numeric"
+          autoComplete={index === 0 ? "one-time-code" : "off"}
+          autoCorrect="off"
+          autoCapitalize="none"
+          spellCheck={false}
           maxLength={1}
           value={value[index] || ""}
           onChange={(e) => handleChange(index, e.target.value)}
