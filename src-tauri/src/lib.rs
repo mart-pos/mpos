@@ -11,13 +11,19 @@ mod storage;
 use std::sync::Arc;
 
 use app::state::AppState;
-use tauri::Manager;
+use tauri::{ActivationPolicy, Manager, RunEvent, WindowEvent};
 use tokio::time::{sleep, Duration};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .setup(|app| {
             let state = Arc::new(AppState::bootstrap(app.handle())?);
             let server_state = Arc::clone(&state);
@@ -37,6 +43,7 @@ pub fn run() {
             });
 
             app.manage(state);
+            app.set_activation_policy(ActivationPolicy::Regular);
 
             Ok(())
         })
@@ -58,6 +65,17 @@ pub fn run() {
             app::commands::exchange_pairing_code,
             app::commands::launch_martpos_pairing
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    let app_handle = app.handle().clone();
+    app.run(move |_handle, event| {
+        if let RunEvent::Reopen { .. } = event {
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }
+    });
 }

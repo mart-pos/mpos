@@ -4,6 +4,8 @@ import App from "./App";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import "./lib/i18n";
+import "flag-icons/css/flag-icons.min.css";
 import "@/styles/globals.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

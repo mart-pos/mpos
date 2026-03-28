@@ -100,6 +100,8 @@ pub struct PairingExchangeRequest {
     pub origin: Option<String>,
     pub client_browser: Option<String>,
     pub client_machine: Option<String>,
+    pub locale: Option<String>,
+    pub theme: Option<crate::config::model::ThemeMode>,
 }
 
 #[derive(serde::Serialize)]
@@ -219,6 +221,8 @@ async fn post_pairing_exchange(
             request_origin.as_deref(),
             payload.client_browser.as_deref(),
             payload.client_machine.as_deref(),
+            payload.locale.as_deref(),
+            payload.theme,
         )
         .map(Json)
         .map_err(ApiError::bad_request)

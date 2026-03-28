@@ -49,8 +49,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { connectBridgeEvents } from "./lib/martpos-bridge-sdk";
+import i18n, { normalizeLanguage } from "./lib/i18n";
 import { fallbackBootstrap } from "./mocks/bootstrap";
+import { cn } from "./lib/utils";
 import type {
   BootstrapPayload,
   BridgeRealtimeEvent,
@@ -120,24 +124,24 @@ function statusTone(status: ResolvedPrinter["status"]) {
   return "border-border bg-muted text-muted-foreground";
 }
 
-function statusText(status: ResolvedPrinter["status"]) {
+function statusText(status: ResolvedPrinter["status"], t: TFunction) {
   if (status === "online") {
-    return "Conectada";
+    return t("printers.status.online");
   }
   if (status === "offline") {
-    return "Desconectada";
+    return t("printers.status.offline");
   }
-  return "Sin confirmar";
+  return t("printers.status.unknown");
 }
 
-function connectionLabel(value: string) {
+function connectionLabel(value: string, t: TFunction) {
   switch (value) {
     case "usb":
       return "USB";
     case "system":
-      return "Sistema";
+      return t("printers.connection.system");
     case "network":
-      return "Red";
+      return t("printers.connection.network");
     case "bluetooth":
       return "Bluetooth";
     default:
@@ -145,33 +149,33 @@ function connectionLabel(value: string) {
   }
 }
 
-function typeLabel(value: PrinterType) {
+function typeLabel(value: PrinterType, t: TFunction) {
   switch (value) {
     case "thermal":
-      return "Termica";
+      return t("printers.type.thermal");
     case "inkjet":
-      return "Inyeccion";
+      return t("printers.type.inkjet");
     case "laser":
-      return "Laser";
+      return t("printers.type.laser");
     case "label":
-      return "Etiquetas";
+      return t("printers.type.label");
     default:
-      return "Sin definir";
+      return t("printers.type.unknown");
   }
 }
 
-function paperLabel(value: PaperWidth) {
+function paperLabel(value: PaperWidth, t: TFunction) {
   switch (value) {
     case "mm58":
       return "58 mm";
     case "mm80":
       return "80 mm";
     default:
-      return "Sin definir";
+      return t("printers.paper.unknown");
   }
 }
 
-function explainError(error: unknown, fallback: string) {
+function explainError(error: unknown, fallback: string, t: TFunction) {
   const text = String(error ?? "").trim();
   if (!text) {
     return fallback;
@@ -182,31 +186,28 @@ function explainError(error: unknown, fallback: string) {
     text.includes("network") ||
     text.includes("timed out")
   ) {
-    return `${fallback} Revisa que MartPOS y MPOS Core esten abiertos en este mismo equipo.`;
+    return t("messages.networkSuffix", { fallback });
   }
 
   if (text.includes("origin not allowed")) {
-    return "MartPOS intento conectar desde un origen no permitido. Revisa el entorno actual de MartPOS y vuelve a abrir la vinculacion.";
+    return t("messages.originNotAllowed");
   }
 
   if (
     text.includes("invalid pairing code") ||
     text.includes("pairing session")
   ) {
-    return "La vinculacion vencio o ya no es valida. Genera un codigo nuevo y vuelve a intentar.";
+    return t("messages.pairingExpired");
   }
 
   if (text.includes("no default printer configured")) {
-    return "Todavia no hay una impresora principal. Elige una impresora lista para poder imprimir.";
+    return t("messages.noDefaultPrinterConfigured");
   }
 
   return text;
 }
 
-function explainPrintDetail(
-  detail: string | null | undefined,
-  fallback: string,
-) {
+function explainPrintDetail(detail: string | null | undefined, fallback: string, t: TFunction) {
   const text = (detail ?? "").trim();
   if (!text) {
     return fallback;
@@ -217,15 +218,15 @@ function explainPrintDetail(
     text.includes("sent ") ||
     text.includes("bytes via")
   ) {
-    return "Impresion enviada correctamente.";
+    return t("messages.printSent");
   }
 
   if (text.includes("preview") || text.includes("html")) {
-    return "Se preparo una vista de apoyo para completar la impresion.";
+    return t("messages.previewPrepared");
   }
 
   if (text.includes("spool") || text.includes("queue")) {
-    return "La impresion fue enviada a la cola del sistema.";
+    return t("messages.queuedToSystem");
   }
 
   return text;
@@ -259,6 +260,7 @@ function SwitchRow({
 
 function App() {
   const { setTheme } = useTheme();
+  const { t } = useTranslation();
   const [data, setData] = useState<BootstrapPayload>(fallbackBootstrap);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
@@ -281,6 +283,19 @@ function App() {
   const [printerDraft, setPrinterDraft] = useState<PrinterProfileDraft | null>(
     null,
   );
+  const localeOptions = [
+    { value: "es-EC", country: "es" },
+    { value: "en-US", country: "us" },
+    { value: "fr-FR", country: "fr" },
+    { value: "pt-BR", country: "br" },
+  ] as const;
+  const selectedLocaleOption =
+    localeOptions.find((option) => option.value === configDraft.locale) ??
+    localeOptions[0];
+
+  useEffect(() => {
+    void i18n.changeLanguage(normalizeLanguage(data.config.locale));
+  }, [data.config.locale]);
 
   useEffect(() => {
     let mounted = true;
@@ -332,9 +347,9 @@ function App() {
       } catch {
         if (!cancelled) {
           setMartposIssue(
-            "No pudimos confirmar la vinculacion con MartPOS. Si MartPOS ya estaba abierto, intenta abrir la vinculacion otra vez.",
+            t("messages.syncPairingError"),
           );
-          setMessage("No se pudo actualizar la vinculacion con MartPOS.");
+          setMessage(t("messages.syncPairingStateError"));
         }
       }
     };
@@ -348,7 +363,7 @@ function App() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [data.pairing.active, pairingLiveMode]);
+  }, [data.pairing.active, pairingLiveMode, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -455,11 +470,7 @@ function App() {
       return;
     }
 
-    if (
-      message.includes("No se pudo") ||
-      message.includes("failed") ||
-      message.includes("invalid")
-    ) {
+    if (/no se pudo|failed|invalid|could not/i.test(message)) {
       toast.error(message);
     } else {
       toast.success(message);
@@ -555,9 +566,9 @@ function App() {
     try {
       const payload = await invoke<BootstrapPayload>("refresh_printers");
       syncBootstrap(payload);
-      setMessage("Lista de impresoras actualizada.");
+      setMessage(t("messages.refreshPrintersSuccess"));
     } catch {
-      setMessage("No se pudo actualizar la lista de impresoras.");
+      setMessage(t("messages.refreshPrintersError"));
     } finally {
       refreshInFlightRef.current = false;
       setLoading(false);
@@ -570,11 +581,9 @@ function App() {
         payload: { printerId },
       });
       syncBootstrap(payload);
-      setMessage("Impresora principal actualizada.");
+      setMessage(t("messages.defaultPrinterUpdated"));
     } catch (error) {
-      setMessage(
-        explainError(error, "No se pudo guardar la impresora principal."),
-      );
+      setMessage(explainError(error, t("messages.defaultPrinterError"), t));
     }
   }
 
@@ -597,15 +606,16 @@ function App() {
 
       if (result.previewPath) {
         setMessage(
-          `No se pudo enviar directo a la impresora. Se genero un archivo de apoyo con ${result.driver} en ${result.previewPath}.`,
+          t("messages.printDirectFailed", {
+            driver: result.driver,
+            path: result.previewPath,
+          }),
         );
       } else {
-        setMessage(
-          explainPrintDetail(result.detail, "Prueba enviada a la impresora."),
-        );
+        setMessage(explainPrintDetail(result.detail, t("messages.printTestSent"), t));
       }
     } catch (error) {
-      setMessage(explainError(error, "No se pudo imprimir la prueba."));
+      setMessage(explainError(error, t("messages.printTestError"), t));
     } finally {
       printInFlightRef.current = false;
     }
@@ -630,20 +640,18 @@ function App() {
 
       if (result.previewPath) {
         setMessage(
-          `No se pudo reimprimir directo. Se genero un archivo de apoyo con ${result.driver} en ${result.previewPath}.`,
+          t("messages.reprintDirectFailed", {
+            driver: result.driver,
+            path: result.previewPath,
+          }),
         );
       } else {
         setMessage(
-          explainPrintDetail(
-            result.detail,
-            "Ultimo recibo real reenviado a impresion.",
-          ),
+          explainPrintDetail(result.detail, t("messages.reprintSuccess"), t),
         );
       }
     } catch (error) {
-      setMessage(
-        explainError(error, "No se pudo reimprimir el ultimo recibo."),
-      );
+      setMessage(explainError(error, t("messages.reprintError"), t));
     } finally {
       printInFlightRef.current = false;
     }
@@ -665,10 +673,10 @@ function App() {
       });
       syncBootstrap(payload);
       if (!silent) {
-        setMessage("Ajustes guardados.");
+        setMessage(t("messages.configSaved"));
       }
     } catch (error) {
-      setMessage(explainError(error, "No se pudieron guardar los ajustes."));
+      setMessage(explainError(error, t("messages.configSaveError"), t));
     }
   }
 
@@ -702,10 +710,10 @@ function App() {
       if (updated) {
         setPrinterDraft(buildPrinterDraft(updated));
       }
-      setMessage("Ajustes de impresora guardados.");
+      setMessage(t("messages.printerProfileSaved"));
       setProfileDialogPrinterId(null);
     } catch (error) {
-      setMessage(explainError(error, "No se pudo guardar esta impresora."));
+      setMessage(explainError(error, t("messages.printerProfileError"), t));
     }
   }
 
@@ -722,14 +730,10 @@ function App() {
       setData((current) => ({ ...current, pairing }));
       setPairingLiveMode(true);
       setMartposIssue(null);
-      setMessage("Codigo listo para vincular MartPOS.");
+      setMessage(t("messages.pairingCodeReady"));
     } catch (error) {
-      setMartposIssue(
-        "No se pudo preparar la vinculacion. Cierra y vuelve a abrir MPOS Core si el problema sigue.",
-      );
-      setMessage(
-        explainError(error, "No se pudo preparar la vinculacion con MartPOS."),
-      );
+      setMartposIssue(t("messages.pairingPrepareError"));
+      setMessage(explainError(error, t("messages.pairingPrepareMartposError"), t));
     }
   }
 
@@ -739,7 +743,7 @@ function App() {
     }
 
     await navigator.clipboard.writeText(data.pairing.code);
-    setMessage("Codigo copiado.");
+    setMessage(t("messages.pairingCodeCopied"));
   }
 
   async function handleLaunchMartposPairing() {
@@ -752,13 +756,11 @@ function App() {
       setData((current) => ({ ...current, pairing: result.pairing }));
       setPairingLiveMode(true);
       setMartposIssue(null);
-      setMessage("MartPOS se abrio para terminar la vinculacion.");
+      setMessage(t("messages.martposOpened"));
     } catch (error) {
       setPairingLaunchPending(false);
-      setMartposIssue(
-        "No pudimos abrir MartPOS o terminar la vinculacion. Revisa que MartPOS este instalado y abierto en este mismo equipo.",
-      );
-      setMessage(explainError(error, "No se pudo abrir MartPOS."));
+      setMartposIssue(t("messages.martposOpenError"));
+      setMessage(explainError(error, t("messages.martposOpenFallback"), t));
     }
   }
 
@@ -769,11 +771,9 @@ function App() {
       setPairingLiveMode(false);
       setPairingLaunchPending(false);
       setMartposIssue(null);
-      setMessage(
-        "Se desvinculo MartPOS en este equipo. Para volver a conectarlo, haz pairing de nuevo.",
-      );
+      setMessage(t("messages.bridgeForgotten"));
     } catch (error) {
-      setMessage(explainError(error, "No se pudo desvincular MartPOS."));
+      setMessage(explainError(error, t("messages.bridgeForgetError"), t));
     }
   }
 
@@ -797,25 +797,23 @@ function App() {
   const diagnosisItems = [
     !data.bridge.connected
       ? {
-          title: "MartPOS todavia no esta vinculado",
-          detail:
-            "Abre MartPOS desde aqui y termina la vinculacion en este equipo.",
+          title: t("printers.diagnostics.issues.bridgeTitle"),
+          detail: t("printers.diagnostics.issues.bridgeDetail"),
           action: (
             <Button
               type="button"
               variant="outline"
               onClick={handleLaunchMartposPairing}
             >
-              Abrir MartPOS
+              {t("common.openMartpos")}
             </Button>
           ),
         }
       : null,
     data.printers.length === 0
       ? {
-          title: "No encontramos impresoras",
-          detail:
-            "Conecta la impresora y usa refrescar para volver a buscarla.",
+          title: t("printers.diagnostics.issues.noPrintersTitle"),
+          detail: t("printers.diagnostics.issues.noPrintersDetail"),
           action: (
             <Button
               type="button"
@@ -823,23 +821,22 @@ function App() {
               onClick={refreshPrinters}
               disabled={loading || refreshCooldownSeconds > 0}
             >
-              Refrescar
+              {t("common.refresh")}
             </Button>
           ),
         }
       : null,
     data.printers.length > 0 && readyPrinters === 0
       ? {
-          title: "Hay impresoras detectadas pero no listas para recibos",
-          detail:
-            "Revisa la impresora principal o ajusta el perfil para recibos.",
+          title: t("printers.diagnostics.issues.notReceiptReadyTitle"),
+          detail: t("printers.diagnostics.issues.notReceiptReadyDetail"),
           action: firstReadyPrinter ? null : (
             <Button
               type="button"
               variant="outline"
               onClick={() => openProfileDialog(data.printers[0])}
             >
-              Revisar impresora
+              {t("common.reviewPrinter")}
             </Button>
           ),
         }
@@ -881,8 +878,8 @@ function App() {
               </TooltipTrigger>
               <TooltipContent sideOffset={8}>
                 {refreshCooldownSeconds > 0
-                  ? `Refrescar en ${refreshCooldownSeconds}s`
-                  : "Refrescar"}
+                  ? `${t("common.refresh")} ${t("common.reconnecting").toLowerCase()} ${refreshCooldownSeconds}s`
+                  : t("common.refresh")}
               </TooltipContent>
             </Tooltip>
 
@@ -898,7 +895,7 @@ function App() {
                   <ExternalLinkIcon />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent sideOffset={8}>Abrir MartPOS</TooltipContent>
+              <TooltipContent sideOffset={8}>{t("common.openMartpos")}</TooltipContent>
             </Tooltip>
 
             <Tooltip>
@@ -913,7 +910,7 @@ function App() {
                   <Settings2Icon />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent sideOffset={8}>Configuracion</TooltipContent>
+              <TooltipContent sideOffset={8}>{t("common.settings")}</TooltipContent>
             </Tooltip>
           </div>
         </div>
@@ -924,7 +921,7 @@ function App() {
           <div className="flex items-start gap-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-amber-800 dark:text-amber-200">
             <AlertCircleIcon className="mt-0.5 size-4 shrink-0" />
             <div>
-              <Text weight="medium">Mart POS necesita atencion</Text>
+              <Text weight="medium">{t("support.martposNeedsAttention")}</Text>
               <Text variant="caption" className="mt-1">
                 {martposIssue}
               </Text>
@@ -951,10 +948,12 @@ function App() {
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <SectionTitle>Impresoras</SectionTitle>
+              <SectionTitle>{t("printers.title")}</SectionTitle>
               <Text variant="muted">
-                Gestiona tus impresoras conectadas. {readyPrinters} de{" "}
-                {data.printers.length} listas.
+                {t("printers.manageConnected", {
+                  ready: readyPrinters,
+                  total: data.printers.length,
+                })}
               </Text>
             </div>
           </div>
@@ -963,10 +962,9 @@ function App() {
           !data.config.defaultPrinterId ? (
             <div className="flex items-start justify-between gap-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3">
               <div>
-                <Text weight="medium">Falta una impresora principal</Text>
+                <Text weight="medium">{t("printers.defaultMissingTitle")}</Text>
                 <Text variant="caption" className="mt-1">
-                  Elige una impresora lista para recibos antes de imprimir desde
-                  MartPOS.
+                  {t("printers.defaultMissingDescription")}
                 </Text>
               </div>
               {firstReadyPrinter ? (
@@ -975,7 +973,7 @@ function App() {
                   variant="outline"
                   onClick={() => void handleSetDefault(firstReadyPrinter.id)}
                 >
-                  Usar sugerida
+                  {t("printers.useSuggested")}
                 </Button>
               ) : null}
             </div>
@@ -985,18 +983,14 @@ function App() {
             <div className="rounded-xl border border-dashed border-border p-6">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <Text weight="medium">Todavia no encontramos impresoras</Text>
+                  <Text weight="medium">{t("printers.emptyTitle")}</Text>
                   <Text variant="caption" className="mt-1">
-                    Conecta la impresora, enciendela y luego refresca la lista.
-                    Si es USB, revisa que este conectada directo a esta
-                    computadora.
+                    {t("printers.emptyDescription")}
                   </Text>
                   <div className="mt-3 flex flex-col gap-1 text-sm text-muted-foreground">
-                    <span>1. Conecta la impresora y enciendela.</span>
-                    <span>
-                      2. Espera unos segundos para que el sistema la detecte.
-                    </span>
-                    <span>3. Pulsa refrescar.</span>
+                    <span>{t("printers.emptyStep1")}</span>
+                    <span>{t("printers.emptyStep2")}</span>
+                    <span>{t("printers.emptyStep3")}</span>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -1007,7 +1001,7 @@ function App() {
                     disabled={loading || refreshCooldownSeconds > 0}
                   >
                     <RefreshCwIcon />
-                    Refrescar
+                    {t("common.refresh")}
                   </Button>
                   <Button
                     type="button"
@@ -1016,7 +1010,7 @@ function App() {
                     onClick={() => setSettingsOpen(true)}
                   >
                     <Settings2Icon />
-                    Abrir soporte
+                    {t("printers.openSupport")}
                   </Button>
                 </div>
               </div>
@@ -1037,7 +1031,7 @@ function App() {
                     <div>
                       <Text weight="normal">{printer.name}</Text>
                       <Text variant="caption">
-                        {printer.manufacturer ?? "Marca no identificada"}
+                        {printer.manufacturer ?? t("common.unknownBrand")}
                         {printer.model} - {printer.profile.paperWidthMm}
                       </Text>
                     </div>
@@ -1046,14 +1040,14 @@ function App() {
                   <div className="flex items-center gap-2">
                     {printer.isDefault ? (
                       <Badge variant="secondary" className="text-xs">
-                        Principal
+                        {t("printers.primary")}
                       </Badge>
                     ) : null}
                     <Badge
                       variant="outline"
                       className={`text-xs ${statusTone(printer.status)}`}
                     >
-                      {statusText(printer.status)}
+                      {statusText(printer.status, t)}
                     </Badge>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -1070,13 +1064,13 @@ function App() {
                           onClick={() => handleSetDefault(printer.id)}
                         >
                           <StarIcon />
-                          Usar como principal
+                          {t("printers.useAsPrimary")}
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => openProfileDialog(printer)}
                         >
                           <EyeIcon />
-                          Ver detalles
+                          {t("printers.details")}
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => handlePrintTest(printer.id)}
@@ -1085,7 +1079,7 @@ function App() {
                           }
                         >
                           <PrinterIcon />
-                          Imprimir ticket de prueba
+                          {t("printers.printTestTicket")}
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => handlePrintLastReceipt(printer)}
@@ -1094,7 +1088,7 @@ function App() {
                           }
                         >
                           <RefreshCwIcon />
-                          Reimprimir ultimo recibo
+                          {t("printers.reprintLastReceipt")}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -1128,9 +1122,9 @@ function App() {
                 <LifeBuoyIcon className="size-4 text-muted-foreground" />
               </div>
               <div>
-                <Text weight="medium">Diagnostico guiado</Text>
+                <Text weight="medium">{t("printers.diagnostics.title")}</Text>
                 <Text variant="caption">
-                  Abre esto si algo no conecta, no aparece o no imprime.
+                  {t("printers.diagnostics.subtitle")}
                 </Text>
               </div>
             </div>
@@ -1141,35 +1135,38 @@ function App() {
           <div className="flex flex-col gap-4 border-t border-border px-5 py-4 text-sm">
             <div className="grid gap-3 md:grid-cols-2">
               <div>
-                <Text variant="caption">Socket en vivo</Text>
+                <Text variant="caption">{t("printers.diagnostics.liveSocket")}</Text>
                 <Text className="mt-1">
-                  {socketConnected ? "Conectado" : "Reconectando"}
+                  {socketConnected ? t("common.connected") : t("common.reconnecting")}
                 </Text>
               </div>
               <div>
-                <Text variant="caption">Estado MartPOS</Text>
+                <Text variant="caption">{t("printers.diagnostics.martposState")}</Text>
                 <Text className="mt-1">
                   {data.bridge.connected
-                    ? "Vinculado"
-                    : "Pendiente de vinculacion"}
+                    ? t("printers.diagnostics.martposLinked")
+                    : t("printers.diagnostics.martposPending")}
                 </Text>
               </div>
               <div>
-                <Text variant="caption">Origen permitido</Text>
+                <Text variant="caption">{t("printers.diagnostics.allowedOrigin")}</Text>
                 <Text className="mt-1">
-                  {data.config.allowedOrigin ?? "Sin definir"}
+                  {data.config.allowedOrigin ?? t("common.undefined")}
                 </Text>
               </div>
               <div>
-                <Text variant="caption">Impresora principal</Text>
+                <Text variant="caption">{t("printers.diagnostics.defaultPrinter")}</Text>
                 <Text className="mt-1">
-                  {defaultPrinter?.name ?? "Sin definir"}
+                  {defaultPrinter?.name ?? t("common.undefined")}
                 </Text>
               </div>
               <div>
-                <Text variant="caption">Impresoras listas</Text>
+                <Text variant="caption">{t("printers.diagnostics.readyPrinters")}</Text>
                 <Text className="mt-1">
-                  {readyPrinters} de {onlinePrinters.length} en linea
+                  {t("printers.diagnostics.onlineCount", {
+                    ready: readyPrinters,
+                    online: onlinePrinters.length,
+                  })}
                 </Text>
               </div>
             </div>
@@ -1193,26 +1190,24 @@ function App() {
               </div>
             ) : (
               <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-3">
-                <Text weight="medium">Todo se ve bien</Text>
+                <Text weight="medium">{t("printers.diagnostics.allGoodTitle")}</Text>
                 <Text variant="caption" className="mt-1">
-                  MartPOS, impresoras y bridge local parecen estar listos.
+                  {t("printers.diagnostics.allGoodDescription")}
                 </Text>
               </div>
             )}
 
             <div className="grid gap-3 md:grid-cols-2">
               <div>
-                <Text variant="caption">Que hacer si no imprime</Text>
+                <Text variant="caption">{t("printers.diagnostics.whatIfNoPrintTitle")}</Text>
                 <Text className="mt-1">
-                  Revisa la principal, imprime una prueba y ajusta el perfil si
-                  hace falta.
+                  {t("printers.diagnostics.whatIfNoPrintDescription")}
                 </Text>
               </div>
               <div>
-                <Text variant="caption">Que hacer si no aparece</Text>
+                <Text variant="caption">{t("printers.diagnostics.whatIfMissingTitle")}</Text>
                 <Text className="mt-1">
-                  Conecta la impresora, espera unos segundos y verifica si el
-                  estado cambia solo.
+                  {t("printers.diagnostics.whatIfMissingDescription")}
                 </Text>
               </div>
             </div>
@@ -1223,31 +1218,64 @@ function App() {
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Configuracion</DialogTitle>
+            <DialogTitle>{t("settings.title")}</DialogTitle>
             <DialogDescription>
-              Ajustes simples para el uso diario. Se guardan automaticamente.
+              {t("settings.description")}
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex flex-col gap-4">
             <div className="space-y-2">
               <Text asChild weight="medium">
-                <label>Idioma</label>
+                <label>{t("settings.language")}</label>
               </Text>
-              <Input
+              <Select
                 value={configDraft.locale}
-                onChange={(event) =>
-                  setConfigDraft((current) => ({
-                    ...current,
-                    locale: event.target.value,
-                  }))
+                onValueChange={(value) =>
+                  setConfigDraft((current) => ({ ...current, locale: value }))
                 }
-              />
+              >
+                <SelectTrigger
+                  aria-label={t("settings.language")}
+                  className="w-full min-w-0 cursor-pointer gap-2 sm:min-w-37"
+                >
+                  <SelectValue>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span
+                        className={cn(
+                          "fi rounded-xs shrink-0",
+                          `fi-${selectedLocaleOption.country}`,
+                        )}
+                        aria-hidden="true"
+                      />
+                      <span className="truncate">
+                        {t(`settings.locales.${selectedLocaleOption.value}`)}
+                      </span>
+                    </span>
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="end">
+                  {localeOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={cn(
+                            "fi rounded-xs shrink-0",
+                            `fi-${option.country}`,
+                          )}
+                          aria-hidden="true"
+                        />
+                        <span>{t(`settings.locales.${option.value}`)}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
               <Text asChild weight="medium">
-                <label>Tema</label>
+                <label>{t("settings.theme")}</label>
               </Text>
               <Select
                 value={configDraft.theme}
@@ -1258,12 +1286,12 @@ function App() {
                 }}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Selecciona un tema" />
+                  <SelectValue placeholder={t("settings.selectTheme")} />
                 </SelectTrigger>
                 <SelectContent>
                   {themeModes.map((value) => (
                     <SelectItem key={value} value={value}>
-                      {value}
+                      {t(`settings.themes.${value}`)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1278,7 +1306,7 @@ function App() {
               variant="outline"
               onClick={() => setSettingsOpen(false)}
             >
-              Cerrar
+              {t("common.close")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1295,10 +1323,12 @@ function App() {
         <DialogContent className="flex h-125 max-w-3xl flex-col">
           <DialogHeader>
             <DialogTitle>
-              Ajustar {profileDialogPrinter?.name ?? "impresora"}
+              {t("printers.profile.title", {
+                name: profileDialogPrinter?.name ?? t("common.undefined"),
+              })}
             </DialogTitle>
             <DialogDescription>
-              Cambia solo lo que necesites para que el ticket salga bien.
+              {t("printers.profile.description")}
             </DialogDescription>
           </DialogHeader>
 
@@ -1308,68 +1338,68 @@ function App() {
               className="flex min-h-0 flex-1 flex-col gap-5"
             >
               <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="info">Informacion</TabsTrigger>
-                <TabsTrigger value="settings">Ajustes</TabsTrigger>
-                <TabsTrigger value="advanced">Avanzado</TabsTrigger>
+                <TabsTrigger value="info">{t("printers.profile.info")}</TabsTrigger>
+                <TabsTrigger value="settings">{t("printers.profile.settings")}</TabsTrigger>
+                <TabsTrigger value="advanced">{t("printers.profile.advanced")}</TabsTrigger>
               </TabsList>
 
               <ScrollArea className="min-h-0 flex-1 pr-4">
                 <TabsContent value="info" className="mt-0">
                   <div className="grid gap-x-8 gap-y-4 md:grid-cols-2">
                     <div>
-                      <Text variant="caption">Nombre</Text>
+                      <Text variant="caption">{t("printers.profile.fields.name")}</Text>
                       <Text className="mt-1" weight="medium">
-                        {profileDialogPrinter?.name ?? "Sin nombre"}
+                        {profileDialogPrinter?.name ?? t("common.noName")}
                       </Text>
                     </div>
                     <div>
-                      <Text variant="caption">Marca y modelo</Text>
+                      <Text variant="caption">{t("printers.profile.fields.brandModel")}</Text>
                       <Text className="mt-1" weight="medium">
-                        {profileDialogPrinter?.manufacturer ?? "Sin marca"}
+                        {profileDialogPrinter?.manufacturer ?? t("common.noBrand")}
                         {profileDialogPrinter?.model
                           ? ` · ${profileDialogPrinter.model}`
                           : ""}
                       </Text>
                     </div>
                     <div>
-                      <Text variant="caption">Conexion</Text>
+                      <Text variant="caption">{t("printers.profile.fields.connection")}</Text>
                       <Text className="mt-1" weight="medium">
                         {profileDialogPrinter
-                          ? connectionLabel(profileDialogPrinter.connectionType)
-                          : "Sin definir"}
+                          ? connectionLabel(profileDialogPrinter.connectionType, t)
+                          : t("common.undefined")}
                       </Text>
                     </div>
                     <div>
-                      <Text variant="caption">Estado</Text>
+                      <Text variant="caption">{t("printers.profile.fields.status")}</Text>
                       <Text className="mt-1" weight="medium">
                         {profileDialogPrinter
-                          ? statusText(profileDialogPrinter.status)
-                          : "Sin definir"}
+                          ? statusText(profileDialogPrinter.status, t)
+                          : t("common.undefined")}
                       </Text>
                     </div>
                     <div>
-                      <Text variant="caption">Driver</Text>
+                      <Text variant="caption">{t("printers.profile.fields.driver")}</Text>
                       <Text className="mt-1" weight="medium">
-                        {profileDialogPrinter?.driver ?? "Sin definir"}
+                        {profileDialogPrinter?.driver ?? t("common.undefined")}
                       </Text>
                     </div>
                     <div>
-                      <Text variant="caption">Cola del sistema</Text>
+                      <Text variant="caption">{t("printers.profile.fields.systemQueue")}</Text>
                       <Text className="mt-1" weight="medium">
-                        {profileDialogPrinter?.systemQueue ?? "No aplica"}
+                        {profileDialogPrinter?.systemQueue ?? t("common.notApplicable")}
                       </Text>
                     </div>
                     <div>
-                      <Text variant="caption">Vendor / Product</Text>
+                      <Text variant="caption">{t("printers.profile.fields.vendorProduct")}</Text>
                       <Text className="mt-1" weight="medium">
                         {profileDialogPrinter?.vendorId ?? "--"} /{" "}
                         {profileDialogPrinter?.productId ?? "--"}
                       </Text>
                     </div>
                     <div>
-                      <Text variant="caption">Serie</Text>
+                      <Text variant="caption">{t("printers.profile.fields.series")}</Text>
                       <Text className="mt-1" weight="medium">
-                        {profileDialogPrinter?.serialNumber ?? "Sin registro"}
+                        {profileDialogPrinter?.serialNumber ?? t("common.notRecorded")}
                       </Text>
                     </div>
                   </div>
@@ -1380,7 +1410,7 @@ function App() {
                     <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-2">
                         <Text asChild weight="medium">
-                          <label>Tipo</label>
+                          <label>{t("printers.profile.fields.type")}</label>
                         </Text>
                         <Select
                           value={printerDraft.kind}
@@ -1398,7 +1428,7 @@ function App() {
                           <SelectContent>
                             {printerTypes.map((value) => (
                               <SelectItem key={value} value={value}>
-                                {typeLabel(value)}
+                                {typeLabel(value, t)}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1407,7 +1437,7 @@ function App() {
 
                       <div className="space-y-2">
                         <Text asChild weight="medium">
-                          <label>Papel</label>
+                          <label>{t("printers.profile.fields.paper")}</label>
                         </Text>
                         <Select
                           value={printerDraft.paperWidthMm}
@@ -1428,7 +1458,7 @@ function App() {
                           <SelectContent>
                             {paperWidths.map((value) => (
                               <SelectItem key={value} value={value}>
-                                {paperLabel(value)}
+                                {paperLabel(value, t)}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1437,7 +1467,7 @@ function App() {
 
                       <div className="space-y-2">
                         <Text asChild weight="medium">
-                          <label>Texto por linea</label>
+                          <label>{t("printers.profile.fields.charsPerLine")}</label>
                         </Text>
                         <Input
                           type="number"
@@ -1459,7 +1489,7 @@ function App() {
 
                       <div className="space-y-2">
                         <Text asChild weight="medium">
-                          <label>Encoding</label>
+                          <label>{t("printers.profile.fields.encoding")}</label>
                         </Text>
                         <Input
                           value={printerDraft.encoding}
@@ -1471,7 +1501,7 @@ function App() {
 
                     <div className="flex flex-col gap-1">
                       <SwitchRow
-                        label="Lista para recibos"
+                        label={t("printers.profile.switches.receiptReady")}
                         checked={printerDraft.receiptCapable}
                         onCheckedChange={(checked) =>
                           setPrinterDraft((current) =>
@@ -1483,7 +1513,7 @@ function App() {
                       />
 
                       <SwitchRow
-                        label="Corte automatico"
+                        label={t("printers.profile.switches.autoCut")}
                         checked={printerDraft.supportsCut}
                         onCheckedChange={(checked) =>
                           setPrinterDraft((current) =>
@@ -1495,7 +1525,7 @@ function App() {
                       />
 
                       <SwitchRow
-                        label="Abrir cajon"
+                        label={t("printers.profile.switches.cashDrawer")}
                         checked={printerDraft.supportsCashDrawer}
                         onCheckedChange={(checked) =>
                           setPrinterDraft((current) =>
@@ -1507,8 +1537,8 @@ function App() {
                       />
 
                       <SwitchRow
-                        label="QR y barras"
-                        helper="Activa si esta impresora maneja QR o codigos de barras en recibos."
+                        label={t("printers.profile.switches.qrAndBarcode")}
+                        helper={t("printers.profile.switches.qrAndBarcodeHelp")}
                         checked={
                           printerDraft.supportsQr ||
                           printerDraft.supportsBarcode
@@ -1532,15 +1562,14 @@ function App() {
                 <TabsContent value="advanced" className="mt-0">
                   <div className="flex flex-col gap-4">
                     <div>
-                      <Text weight="medium">Soporte USB especial</Text>
+                      <Text weight="medium">{t("printers.profile.advancedTitle")}</Text>
                       <Text variant="caption" className="mt-1">
-                        Solo usa esto si soporte te lo pide para una impresora
-                        USB especial.
+                        {t("printers.profile.advancedDescription")}
                       </Text>
                     </div>
 
                     <SwitchRow
-                      label="Impresion USB avanzada"
+                      label={t("printers.profile.switches.advancedUsb")}
                       checked={printerDraft.rawSupport}
                       onCheckedChange={(checked) =>
                         setPrinterDraft((current) =>
@@ -1553,7 +1582,7 @@ function App() {
 
                     <div className="space-y-2">
                       <Text asChild weight="medium">
-                        <label>Ruta del dispositivo</label>
+                        <label>{t("printers.profile.fields.rawDevicePath")}</label>
                       </Text>
                       <Input
                         value={printerDraft.rawDevicePath}
@@ -1587,7 +1616,7 @@ function App() {
               }}
               disabled={!profileDialogPrinter}
             >
-              Resetear
+              {t("common.reset")}
             </Button>
             <Button
               type="button"
@@ -1595,10 +1624,10 @@ function App() {
               variant="outline"
               onClick={() => setProfileDialogPrinterId(null)}
             >
-              Cancelar
+              {t("common.cancel")}
             </Button>
             <Button type="button" size="lg" onClick={handleSavePrinterProfile}>
-              Guardar
+              {t("common.save")}
             </Button>
           </DialogFooter>
         </DialogContent>

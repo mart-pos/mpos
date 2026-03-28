@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    process::Command,
     sync::{Arc, Mutex, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -96,6 +97,7 @@ struct PairingState {
 pub struct AppState {
     app_name: String,
     app_version: String,
+    local_machine_name: String,
     discovery_service: DiscoveryService,
     storage_repository: StorageRepository,
     storage_overview: StorageOverview,
@@ -208,12 +210,17 @@ impl AppState {
             config.allowed_origin.as_deref(),
         ));
         config.default_printer_id = default_printer_id;
+        let local_machine_name = resolve_local_machine_name();
+        let mut bridge = BridgeState::from_record(&persisted.bridge);
+        if bridge.paired_at_unix.is_some() {
+            bridge.client_machine = Some(local_machine_name.clone());
+        }
 
         storage_repository
             .save(&PersistedState {
                 config: config.clone(),
                 auth: persisted.auth.clone(),
-                bridge: persisted.bridge.clone(),
+                bridge: bridge.to_record(),
                 printer_overrides: persisted.printer_overrides.clone(),
             })
             .map_err(|error| format!("failed to persist initialized state: {error}"))?;
@@ -223,6 +230,7 @@ impl AppState {
         Ok(Self {
             app_name: "MPOS Core".into(),
             app_version: env!("CARGO_PKG_VERSION").into(),
+            local_machine_name,
             discovery_service,
             storage_repository,
             storage_overview,
@@ -234,7 +242,7 @@ impl AppState {
                 printers,
                 printer_overrides: persisted.printer_overrides,
                 last_receipt: None,
-                bridge: BridgeState::from_record(&persisted.bridge),
+                bridge,
                 scanner_active: false,
                 last_refresh_error: None,
                 pairing: PairingState::default(),
@@ -718,6 +726,8 @@ impl AppState {
         origin: Option<&str>,
         client_browser: Option<&str>,
         client_machine: Option<&str>,
+        locale: Option<&str>,
+        theme: Option<ThemeMode>,
     ) -> Result<PairingExchangeResult, String> {
         let mut runtime = self.runtime.write().expect("runtime lock poisoned");
         let now = unix_now();
@@ -752,7 +762,18 @@ impl AppState {
         runtime.bridge.client_machine = client_machine
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(ToString::to_string);
+            .map(ToString::to_string)
+            .or_else(|| Some(self.local_machine_name.clone()));
+        runtime.bridge.client_machine = Some(self.local_machine_name.clone());
+        if let Some(locale) = locale
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            runtime.config.locale = locale.to_string();
+        }
+        if let Some(theme) = theme {
+            runtime.config.theme = theme;
+        }
 
         runtime.pairing = PairingState::default();
         self.persist_runtime(
@@ -1291,6 +1312,49 @@ fn resolve_effective_allowed_origin(configured_origin: Option<&str>) -> String {
         }
         Some(origin) => origin.to_string(),
     }
+}
+
+fn resolve_local_machine_name() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(name) = run_and_read("/usr/sbin/scutil", &["--get", "ComputerName"]) {
+            return name;
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(name) = run_and_read("hostname", &[]) {
+            return name;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(name) = run_and_read("hostnamectl", &["--static"]) {
+            return name;
+        }
+    }
+
+    if let Some(name) = std::env::var("HOSTNAME")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return name;
+    }
+
+    run_and_read("hostname", &[]).unwrap_or_else(|| "Este equipo".into())
+}
+
+fn run_and_read(command: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(command).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!value.is_empty()).then_some(value)
 }
 
 #[cfg(test)]

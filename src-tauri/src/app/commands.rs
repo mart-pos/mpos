@@ -49,6 +49,8 @@ pub struct PairingExchangePayload {
     pub origin: Option<String>,
     pub client_browser: Option<String>,
     pub client_machine: Option<String>,
+    pub locale: Option<String>,
+    pub theme: Option<crate::config::model::ThemeMode>,
 }
 
 #[tauri::command]
@@ -169,6 +171,8 @@ pub fn exchange_pairing_code(
         payload.origin.as_deref(),
         payload.client_browser.as_deref(),
         payload.client_machine.as_deref(),
+        payload.locale.as_deref(),
+        payload.theme,
     )
 }
 

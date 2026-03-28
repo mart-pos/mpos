@@ -18,6 +18,7 @@ import {
   Unlink,
   ExternalLink,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { SectionTitle, Text } from "./Typography";
 
@@ -44,31 +45,7 @@ function formatCountdown(expiresAt: string | null, nowMs: number) {
 }
 
 function formatLinkedAgo(value: string | null, nowMs: number) {
-  const unix = parseUnixTimestamp(value);
-  if (!unix) {
-    return "Vinculado hace poco";
-  }
-
-  const diffSeconds = Math.max(0, Math.floor(nowMs / 1000) - unix);
-  if (diffSeconds < 10) {
-    return "Vinculado hace unos segundos";
-  }
-  if (diffSeconds < 60) {
-    return `Vinculado hace ${diffSeconds} segundos`;
-  }
-
-  const diffMinutes = Math.floor(diffSeconds / 60);
-  if (diffMinutes < 60) {
-    return `Vinculado hace ${diffMinutes} min`;
-  }
-
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) {
-    return `Vinculado hace ${diffHours} h`;
-  }
-
-  const diffDays = Math.floor(diffHours / 24);
-  return `Vinculado hace ${diffDays} d`;
+  return { unix: parseUnixTimestamp(value), nowMs };
 }
 
 type AuthVerificationProps = {
@@ -100,9 +77,38 @@ export function AuthVerification({
   onCopyCode,
   onDisconnect,
 }: AuthVerificationProps) {
+  const { t } = useTranslation();
   const [copied, setCopied] = React.useState(false);
   const [nowMs, setNowMs] = React.useState(() => Date.now());
   const [disconnectDialogOpen, setDisconnectDialogOpen] = React.useState(false);
+
+  const linkedAgo = React.useMemo(() => {
+    const { unix } = formatLinkedAgo(pairedAt, nowMs);
+    if (!unix) {
+      return t("auth.linkedRecently");
+    }
+
+    const diffSeconds = Math.max(0, Math.floor(nowMs / 1000) - unix);
+    if (diffSeconds < 10) {
+      return t("auth.linkedSeconds");
+    }
+    if (diffSeconds < 60) {
+      return t("auth.linkedSecondsExact", { count: diffSeconds });
+    }
+
+    const diffMinutes = Math.floor(diffSeconds / 60);
+    if (diffMinutes < 60) {
+      return t("auth.linkedMinutes", { count: diffMinutes });
+    }
+
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) {
+      return t("auth.linkedHours", { count: diffHours });
+    }
+
+    const diffDays = Math.floor(diffHours / 24);
+    return t("auth.linkedDays", { count: diffDays });
+  }, [nowMs, pairedAt, t]);
 
   const handleCopyCode = async () => {
     if (!pairingCode) return;
@@ -131,9 +137,9 @@ export function AuthVerification({
         <div className="w-full space-y-4 ">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <SectionTitle>Conexion lista</SectionTitle>
+              <SectionTitle>{t("auth.connectedTitle")}</SectionTitle>
               <Text variant="muted">
-                Este equipo ya esta vinculado con Mart POS
+                {t("auth.connectedSubtitle")}
               </Text>
             </div>
           </div>
@@ -157,7 +163,7 @@ export function AuthVerification({
                     (machineName ?? "este equipo")}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {formatLinkedAgo(pairedAt, nowMs)}
+                  {linkedAgo}
                 </p>
               </div>
               <Button
@@ -167,7 +173,7 @@ export function AuthVerification({
                 onClick={() => setDisconnectDialogOpen(true)}
               >
                 <Unlink className="w-4 h-4 mr-2" />
-                Olvidar conexion
+                {t("auth.forgetConnection")}
               </Button>
             </div>
           </div>
@@ -180,10 +186,9 @@ export function AuthVerification({
         >
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Olvidar conexion</DialogTitle>
+              <DialogTitle>{t("auth.forgetDialogTitle")}</DialogTitle>
               <DialogDescription>
-                Esta accion desvinculara este equipo de MartPOS. Tendras que
-                volver a conectarlo para usarlo otra vez.
+                {t("auth.forgetDialogDescription")}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
@@ -192,7 +197,7 @@ export function AuthVerification({
                 variant="outline"
                 onClick={() => setDisconnectDialogOpen(false)}
               >
-                Cancelar
+                {t("common.cancel")}
               </Button>
               <Button
                 type="button"
@@ -202,7 +207,7 @@ export function AuthVerification({
                   onDisconnect();
                 }}
               >
-                Si, olvidar
+                {t("auth.forgetConfirm")}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -227,10 +232,10 @@ export function AuthVerification({
             />
           </div>
           <h1 className="text-lg font-semibold text-foreground text-center mb-1">
-            Conecta con MartPOS
+            {t("auth.title")}
           </h1>
           <p className="text-sm text-muted-foreground text-center">
-            Elige como quieres vincular este equipo
+            {t("auth.subtitle")}
           </p>
         </div>
 
@@ -239,10 +244,10 @@ export function AuthVerification({
         <Tabs defaultValue="2">
           <TabsList className="w-full" variant="line">
             <TabsTrigger className="w-full h-10 cursor-pointer" value="2">
-              Automatico
+              {t("auth.automaticTab")}
             </TabsTrigger>
             <TabsTrigger className="w-full h-10 cursor-pointer" value="1">
-              Codigo manual
+              {t("auth.manualTab")}
             </TabsTrigger>
           </TabsList>
           <div className="border-t border-border" />
@@ -251,13 +256,12 @@ export function AuthVerification({
             <div className="pt-10 pb-5 sm:px-8">
               <div className="flex justify-center items-center mb-1 gap-2">
                 <span className="text-sm font-medium text-foreground">
-                  Codigo de vinculacion
+                  {t("auth.manualTitle")}
                 </span>
               </div>
 
               <p className="text-xs text-center text-muted-foreground mb-4">
-                Copia este codigo y pegalo en MartPOS si prefieres completar la
-                vinculacion manualmente
+                {t("auth.manualDescription")}
               </p>
 
               {/* Código */}
@@ -286,18 +290,18 @@ export function AuthVerification({
                   disabled={pairingActive}
                 >
                   <RefreshCw className="w-4 h-4 mr-1.5" />
-                  Generar codigo
+                  {t("auth.generateCode")}
                 </Button>
                 <Button size="lg" className="w-30" onClick={handleCopyCode}>
                   {copied ? (
                     <>
                       <Check className="w-4 h-4 mr-1.5" />
-                      Copiado
+                      {t("auth.copied")}
                     </>
                   ) : (
                     <>
                       <Copy className="w-4 h-4 mr-1.5" />
-                      Copiar
+                      {t("auth.copy")}
                     </>
                   )}
                 </Button>
@@ -306,8 +310,10 @@ export function AuthVerification({
             <div className="px-6 pb-6 sm:px-8 sm:pb-8">
               <p className="text-center text-xs text-muted-foreground">
                 {pairingCode
-                  ? `Este codigo vence en ${formatCountdown(pairingExpiresAt, nowMs)}`
-                  : "Genera un codigo para vincular este equipo"}
+                  ? t("auth.codeExpiresIn", {
+                      time: formatCountdown(pairingExpiresAt, nowMs),
+                    })
+                  : t("auth.generateCodeHint")}
               </p>
             </div>
           </TabsContent>
@@ -316,12 +322,12 @@ export function AuthVerification({
               <div>
                 <div className="flex items-center mb-1 gap-2">
                   <span className="text-sm font-medium text-foreground">
-                    Vinculacion automatica
+                    {t("auth.automaticTitle")}
                   </span>
                 </div>
 
                 <p className="text-xs text-muted-foreground mb-4">
-                  Abre MartPOS y completa la vinculacion sin copiar codigos
+                  {t("auth.automaticDescription")}
                 </p>
               </div>
               {!autoLinkPending && (
@@ -332,7 +338,7 @@ export function AuthVerification({
                   onClick={onAutoLink}
                 >
                   <ExternalLink className="w-4 h-4" />
-                  Abrir MartPOS
+                  {t("common.openMartpos")}
                 </Button>
               )}
 
@@ -340,7 +346,7 @@ export function AuthVerification({
                 <div className="flex items-center justify-center gap-3 h-11 px-4 rounded-lg bg-secondary border border-border">
                   <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
                   <span className="text-sm text-muted-foreground">
-                    Esperando confirmacion...
+                    {t("auth.waitingConfirmation")}
                   </span>
                 </div>
               )}

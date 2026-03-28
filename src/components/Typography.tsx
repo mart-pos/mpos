@@ -11,7 +11,7 @@ type HeadingProps = React.HTMLAttributes<HTMLHeadingElement> & {
 };
 
 const pageTitleStyles = cn(
-  "text-lg font-semibold tracking-tight leading-tight first-letter:capitalize",
+  "text-lg font-medium tracking-tight leading-tight first-letter:capitalize",
 );
 
 function PageTitle({ asChild, className, ...props }: HeadingProps) {
