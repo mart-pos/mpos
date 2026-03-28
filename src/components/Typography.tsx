@@ -26,7 +26,7 @@ function SectionTitle({ asChild, className, ...props }: HeadingProps) {
   return <Comp className={cn(sectionTitleStyles, className)} {...props} />;
 }
 
-const cardTitleStyles = cn("text-sm font-semibold leading-5 text-foreground");
+const cardTitleStyles = cn("text-base font-medium leading-5 text-foreground");
 
 function CardTitle({ asChild, className, ...props }: HeadingProps) {
   const Comp = asChild ? Slot.Root : ("h3" as const);

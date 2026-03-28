@@ -2,6 +2,19 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+@font-face {
+  font-family: "Geist";
+  src: url("../assets/fonts/Geist[wght].woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: var(--font-geist-mono);
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -77,12 +90,6 @@
     60% {
       background-position: calc(100% + var(--shiny-width)) 0;
     }
-  }
-}
-
-@layer utilities {
-  html {
-    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   }
 }
 
@@ -163,8 +170,6 @@
     --chart-3: 0 0 83;
     --chart-4: 0 0 64;
     --chart-5: 27 87% 67%;
-    font-family: Inter, sans-serif;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "salt";
   }
 
   .dark {
@@ -196,14 +201,12 @@
     user-select: text;
   }
 
-  @supports (font-variation-settings: normal) {
-    :root {
-      font-feature-settings: "cv02", "cv03", "cv04", "cv11", "salt";
-    }
-  }
-
   body {
     @apply bg-background text-foreground;
+    font-family: "Geist", -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 }
 
