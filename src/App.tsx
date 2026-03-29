@@ -552,7 +552,12 @@ function App() {
       setData((current) => ({ ...current, pairing }));
       setPairingLiveMode(true);
       setMartposIssue(null);
-      setMessage(t("messages.pairingCodeReady"));
+      if (pairing.code && navigator?.clipboard) {
+        await navigator.clipboard.writeText(pairing.code);
+        setMessage(t("messages.pairingCodeCopied"));
+      } else {
+        setMessage(t("messages.pairingCodeReady"));
+      }
     } catch (error) {
       setMartposIssue(t("messages.pairingPrepareError"));
       setMessage(

@@ -27,9 +27,15 @@ pub enum ReceiptBlock {
         total: ReceiptAmount,
     },
     Totals {
+        #[serde(default = "default_subtotal_label")]
+        subtotal_label: String,
         subtotal: ReceiptAmount,
+        #[serde(default = "default_tax_label")]
+        tax_label: String,
         tax: ReceiptAmount,
         #[serde(alias = "grandTotal")]
+        #[serde(default = "default_total_label")]
+        grand_total_label: String,
         grand_total: ReceiptAmount,
     },
     Qr { value: String },
@@ -109,12 +115,18 @@ impl ReceiptDocument {
                     }
                 }
                 ReceiptBlock::Totals {
+                    subtotal_label,
                     subtotal,
+                    tax_label,
                     tax,
+                    grand_total_label,
                     grand_total,
                 } => {
+                    validate_text(subtotal_label, 64, "subtotal_label")?;
                     subtotal.validate("subtotal")?;
+                    validate_text(tax_label, 64, "tax_label")?;
                     tax.validate("tax")?;
+                    validate_text(grand_total_label, 64, "grand_total_label")?;
                     grand_total.validate("grand_total")?;
                     if let (Some(subtotal), Some(tax), Some(grand_total)) = (
                         subtotal.as_numeric(),
@@ -189,6 +201,18 @@ impl ReceiptAmount {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_subtotal_label() -> String {
+    "Subtotal".into()
+}
+
+fn default_tax_label() -> String {
+    "Tax".into()
+}
+
+fn default_total_label() -> String {
+    "Total".into()
 }
 
 fn validate_text(value: &str, max_len: usize, label: &str) -> Result<(), String> {

@@ -158,8 +158,11 @@ pub fn build_test_receipt(width: PaperWidthMm) -> ReceiptDocument {
                 bold: true,
             },
             ReceiptBlock::Totals {
+                subtotal_label: "Subtotal".into(),
                 subtotal: ReceiptAmount::Number(19050),
+                tax_label: "Impuesto".into(),
                 tax: ReceiptAmount::Number(0),
+                grand_total_label: "Total".into(),
                 grand_total: ReceiptAmount::Number(19050),
             },
             ReceiptBlock::Text {

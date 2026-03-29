@@ -50,14 +50,17 @@ pub fn render_receipt_text(document: &ReceiptDocument, profile: &PrinterProfile)
                 lines.push(format_item_line_display(*qty, unit_price, total, columns));
             }
             ReceiptBlock::Totals {
+                subtotal_label,
                 subtotal,
+                tax_label,
                 tax,
+                grand_total_label,
                 grand_total,
             } => {
                 lines.push(divider.clone());
-                lines.push(format_pair_display("Subtotal", subtotal, columns));
-                lines.push(format_pair_display("Impuesto", tax, columns));
-                lines.push(format_pair_display("Total", grand_total, columns));
+                lines.push(format_pair_display(subtotal_label, subtotal, columns));
+                lines.push(format_pair_display(tax_label, tax, columns));
+                lines.push(format_pair_display(grand_total_label, grand_total, columns));
             }
             ReceiptBlock::Qr { value } => {
                 lines.push("[QR]".into());
@@ -138,22 +141,25 @@ pub fn render_receipt_escpos(document: &ReceiptDocument, profile: &PrinterProfil
                 bytes.push(b'\n');
             }
             ReceiptBlock::Totals {
+                subtotal_label,
                 subtotal,
+                tax_label,
                 tax,
+                grand_total_label,
                 grand_total,
             } => {
                 bytes.extend_from_slice(divider_line(columns).as_bytes());
                 bytes.push(b'\n');
                 bytes.extend_from_slice(
-                    format_pair_display("Subtotal", subtotal, columns).as_bytes(),
+                    format_pair_display(subtotal_label, subtotal, columns).as_bytes(),
                 );
                 bytes.push(b'\n');
                 bytes.extend_from_slice(
-                    format_pair_display("Impuesto", tax, columns).as_bytes(),
+                    format_pair_display(tax_label, tax, columns).as_bytes(),
                 );
                 bytes.push(b'\n');
                 bytes.extend_from_slice(
-                    format_pair_display("Total", grand_total, columns).as_bytes(),
+                    format_pair_display(grand_total_label, grand_total, columns).as_bytes(),
                 );
                 bytes.push(b'\n');
             }
