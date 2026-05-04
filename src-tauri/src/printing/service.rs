@@ -249,7 +249,8 @@ pub fn dispatch_raw_job(printer: &ResolvedPrinter, payload: &[u8]) -> Result<Pri
     match resolve_driver(printer, PrintMode::Raw) {
         DriverKind::EscPosUsb => escpos::send_raw_bytes(printer, payload)
             .or_else(|_| preview_raw(printer, payload, "esc_pos_usb_preview")),
-        DriverKind::EscPosSystem => preview_raw(printer, payload, "esc_pos_system_raw_preview"),
+        DriverKind::EscPosSystem => escpos::send_raw_bytes(printer, payload)
+            .or_else(|_| preview_raw(printer, payload, "esc_pos_system_raw_preview")),
         DriverKind::SystemPrint => preview_raw(printer, payload, "system_print_raw_preview"),
         DriverKind::Preview => preview_raw(printer, payload, "preview_raw"),
     }
