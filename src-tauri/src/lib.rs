@@ -11,7 +11,9 @@ mod storage;
 use std::sync::Arc;
 
 use app::state::AppState;
-use tauri::{ActivationPolicy, Manager, RunEvent, WindowEvent};
+#[cfg(target_os = "macos")]
+use tauri::ActivationPolicy;
+use tauri::{Manager, WindowEvent};
 use tokio::time::{sleep, Duration};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -43,6 +45,7 @@ pub fn run() {
             });
 
             app.manage(state);
+            #[cfg(target_os = "macos")]
             app.set_activation_policy(ActivationPolicy::Regular);
 
             Ok(())
@@ -68,14 +71,21 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
+    #[cfg(target_os = "macos")]
     let app_handle = app.handle().clone();
     app.run(move |_handle, event| {
-        if let RunEvent::Reopen { .. } = event {
-            if let Some(window) = app_handle.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
+        #[cfg(target_os = "macos")]
+        {
+            if let tauri::RunEvent::Reopen { .. } = event {
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
             }
         }
+
+        #[cfg(not(target_os = "macos"))]
+        let _ = event;
     });
 }
